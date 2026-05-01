@@ -27,6 +27,7 @@ exploration:
 eval:
   every_steps: 5000
   episodes: 10
+  seed: 10000
 
 logging:
   loss_every_steps: 1000

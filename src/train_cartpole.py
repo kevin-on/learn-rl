@@ -147,7 +147,7 @@ def main() -> None:
     train_adapter = CartPoleTaskAdapter(train_env)
 
     eval_env = gym.make(config.env.id)
-    eval_env.action_space.seed(config.seed + config.train.steps)
+    eval_env.action_space.seed(config.eval.seed)
     eval_adapter = CartPoleTaskAdapter(eval_env)
 
     exploration_schedule = ExplorationRateSchedule(
@@ -211,7 +211,7 @@ def main() -> None:
             agent.online_q_net,
             eval_adapter,
             num_episodes=config.eval.episodes,
-            seed=config.seed + step,
+            seed=config.eval.seed,
         )
         eval_mean_return = float(np.mean(returns))
         eval_std_return = float(np.std(returns))
@@ -219,6 +219,7 @@ def main() -> None:
         metrics.write(
             step=step,
             epsilon=exploration_rate,
+            eval_seed=config.eval.seed,
             eval_mean_return=eval_mean_return,
             eval_std_return=eval_std_return,
             eval_best_return=eval_best_return,

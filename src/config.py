@@ -43,6 +43,7 @@ class ExplorationConfig:
 class EvalConfig:
     every_steps: int = 5_000
     episodes: int = 10
+    seed: int = 10_000
 
 
 @dataclass(frozen=True)
@@ -166,6 +167,8 @@ def _validate_config(config: CartPoleDQNConfig) -> None:
         raise ValueError("eval.every_steps must be positive.")
     if config.eval.episodes <= 0:
         raise ValueError("eval.episodes must be positive.")
+    if config.eval.seed < 0:
+        raise ValueError("eval.seed must be non-negative.")
 
     if config.logging.loss_every_steps <= 0:
         raise ValueError("logging.loss_every_steps must be positive.")
