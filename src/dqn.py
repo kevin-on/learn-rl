@@ -21,6 +21,7 @@ class DQNLog:
     step_index: int
     loss: float | None
     reward: float
+    exploration_rate: float
     terminated: bool
     truncated: bool
     info: dict[str, Any]
@@ -31,9 +32,10 @@ type DQNLogFn[Observation, EnvAction] = Callable[
     None,
 ]
 type DQNEvalFn[Observation, EnvAction] = Callable[
-    ["DQN[Observation, EnvAction]", int],
+    ["DQN[Observation, EnvAction]", int, float],
     None,
 ]
+type ExplorationRateFn = Callable[[int], float]
 
 
 class DQN[Observation, EnvAction]:
@@ -43,7 +45,6 @@ class DQN[Observation, EnvAction]:
         q_net: nn.Module,
         learning_rate: float,
         discount_factor: float,
-        exploration_rate: float,
         soft_update_rate: float,
         buffer_capacity: int,
     ) -> None:
@@ -57,7 +58,6 @@ class DQN[Observation, EnvAction]:
             self.online_q_net.parameters(), lr=learning_rate
         )
         self.discount_factor = discount_factor
-        self.exploration_rate = exploration_rate
         self.soft_update_rate = soft_update_rate
         self.replay_buffer: deque[Experience] = deque(maxlen=buffer_capacity)
 
@@ -65,6 +65,7 @@ class DQN[Observation, EnvAction]:
         self,
         num_steps: int,
         batch_size: int,
+        exploration_rate_fn: ExplorationRateFn,
         env_seed: int | None = None,
         log_fn: DQNLogFn[Observation, EnvAction] | None = None,
         eval_fn: DQNEvalFn[Observation, EnvAction] | None = None,
@@ -72,7 +73,10 @@ class DQN[Observation, EnvAction]:
         observation, _info = self.env.reset(seed=env_seed)
         state = self.task_adapter.encode_observation(observation)
         for step_index in range(num_steps):
-            action_index, env_action = self._select_action(state)
+            exploration_rate = validate_exploration_rate(
+                exploration_rate_fn(step_index)
+            )
+            action_index, env_action = self._select_action(state, exploration_rate)
             next_observation, reward, terminated, truncated, info = self.env.step(
                 env_action
             )
@@ -110,16 +114,19 @@ class DQN[Observation, EnvAction]:
                         step_index=step_index,
                         loss=loss_value,
                         reward=float(reward),
+                        exploration_rate=exploration_rate,
                         terminated=terminated,
                         truncated=truncated,
                         info=info,
                     ),
                 )
             if eval_fn is not None:
-                eval_fn(self, step_index)
+                eval_fn(self, step_index, exploration_rate)
 
-    def _select_action(self, state: State) -> tuple[int, EnvAction]:
-        if np.random.random() < self.exploration_rate:
+    def _select_action(
+        self, state: State, exploration_rate: float
+    ) -> tuple[int, EnvAction]:
+        if np.random.random() < exploration_rate:
             action_index = self.task_adapter.sample_action_index()
         else:
             state_tensor = torch.as_tensor(
@@ -179,6 +186,14 @@ class DQN[Observation, EnvAction]:
                 f"expected {self.task_adapter.num_actions}, got {q_values.shape[1]}"
             )
             raise ValueError(msg)
+
+
+def validate_exploration_rate(exploration_rate: float) -> float:
+    exploration_rate = float(exploration_rate)
+    if not 0.0 <= exploration_rate <= 1.0:
+        msg = f"exploration rate must be in [0, 1], got {exploration_rate}"
+        raise ValueError(msg)
+    return exploration_rate
 
 
 @torch.no_grad()

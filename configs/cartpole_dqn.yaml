@@ -1,0 +1,33 @@
+experiment:
+  name: cartpole_dqn
+  run_root: runs
+
+seed: 123
+
+env:
+  id: CartPole-v1
+
+model:
+  hidden_sizes: [128, 128]
+
+train:
+  steps: 25000
+  batch_size: 64
+  buffer_capacity: 50000
+  learning_rate: 0.001
+  discount_factor: 0.99
+  soft_update_rate: 0.005
+
+exploration:
+  schedule: linear
+  start: 1.0
+  end: 0.05
+  decay_steps: 15000
+
+eval:
+  every_steps: 5000
+  episodes: 10
+
+logging:
+  loss_every_steps: 1000
+  save_plot: true
