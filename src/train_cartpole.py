@@ -28,14 +28,31 @@ def build_q_net(num_actions: int, hidden_sizes: list[int]) -> nn.Module:
     return nn.Sequential(*layers)
 
 
-def choose_device() -> torch.device:
-    if torch.cuda.is_available():
-        return torch.device("cuda")
+def choose_device(requested_device: str) -> torch.device:
+    if requested_device == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
 
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
 
-    return torch.device("cpu")
+        return torch.device("cpu")
+
+    if requested_device == "cpu":
+        return torch.device("cpu")
+
+    if requested_device == "cuda":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        raise RuntimeError("--device cuda was requested, but CUDA is not available.")
+
+    if requested_device == "mps":
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        raise RuntimeError("--device mps was requested, but MPS is not available.")
+
+    msg = f"device must be one of: auto, cpu, cuda, mps; got {requested_device}"
+    raise ValueError(msg)
 
 
 def set_random_seeds(seed: int) -> None:
@@ -99,6 +116,12 @@ def parse_args() -> argparse.Namespace:
         help="Output directory for resolved config, metrics JSONL, and plots.",
     )
     parser.add_argument(
+        "--device",
+        choices=["auto", "cpu", "cuda", "mps"],
+        default="auto",
+        help="PyTorch device to use. 'auto' prefers CUDA, then MPS, then CPU.",
+    )
+    parser.add_argument(
         "--set",
         dest="overrides",
         action="append",
@@ -137,7 +160,7 @@ def main() -> None:
     args = parse_args()
     config = resolve_config(args)
     set_random_seeds(config.seed)
-    device = choose_device()
+    device = choose_device(args.device)
     run_dir = create_run_dir(config, args.run_dir)
     metrics_path = run_dir / "metrics.jsonl"
     save_config(config, run_dir / "config.yaml")
@@ -160,10 +183,12 @@ def main() -> None:
     agent = DQN(
         train_adapter,
         q_net,
+        optimizer_name=config.train.optimizer,
         learning_rate=config.train.learning_rate,
         discount_factor=config.train.discount_factor,
         soft_update_rate=config.train.soft_update_rate,
         buffer_capacity=config.train.buffer_capacity,
+        max_grad_norm=config.train.max_grad_norm,
     )
 
     recent_returns: deque[float] = deque(maxlen=20)
@@ -173,12 +198,17 @@ def main() -> None:
         record = {
             "step": step,
             "loss": log.loss,
+            "grad_norm": log.grad_norm,
             "epsilon": log.exploration_rate,
         }
 
         if log.loss is not None and step % config.logging.loss_every_steps == 0:
+            grad_norm_text = (
+                "" if log.grad_norm is None else f" grad_norm={log.grad_norm:.4f}"
+            )
             print(
-                f"step={step:6d} loss={log.loss:.4f} epsilon={log.exploration_rate:.3f}"
+                f"step={step:6d} loss={log.loss:.4f}{grad_norm_text} "
+                f"epsilon={log.exploration_rate:.3f}"
             )
 
         if "episode" in log.info:

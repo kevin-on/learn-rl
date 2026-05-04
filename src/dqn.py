@@ -20,6 +20,7 @@ type Experience = tuple[State, int, float, State, bool]
 class DQNLog:
     step_index: int
     loss: float | None
+    grad_norm: float | None
     reward: float
     exploration_rate: float
     terminated: bool
@@ -43,10 +44,12 @@ class DQN[Observation, EnvAction]:
         self,
         task_adapter: DiscreteActionTaskAdapter[Observation, EnvAction],
         q_net: nn.Module,
+        optimizer_name: str,
         learning_rate: float,
         discount_factor: float,
         soft_update_rate: float,
         buffer_capacity: int,
+        max_grad_norm: float | None,
     ) -> None:
         self.task_adapter = task_adapter
         self.env = task_adapter.env
@@ -54,11 +57,14 @@ class DQN[Observation, EnvAction]:
         self.target_q_net = copy.deepcopy(q_net)
         self.target_q_net.eval()
         self.device = next(self.online_q_net.parameters()).device
-        self.optimizer = torch.optim.Adam(
-            self.online_q_net.parameters(), lr=learning_rate
+        self.optimizer = build_optimizer(
+            optimizer_name,
+            self.online_q_net,
+            learning_rate,
         )
         self.discount_factor = discount_factor
         self.soft_update_rate = soft_update_rate
+        self.max_grad_norm = max_grad_norm
         self.replay_buffer: deque[Experience] = deque(maxlen=buffer_capacity)
 
     def train(
@@ -93,12 +99,23 @@ class DQN[Observation, EnvAction]:
                 state = self.task_adapter.encode_observation(observation)
 
             loss_value = None
+            grad_norm = None
             if len(self.replay_buffer) >= batch_size:
                 loss = self._compute_td_loss(batch_size)
                 loss_value = float(loss.item())
 
                 self.optimizer.zero_grad()
                 loss.backward()
+                if self.max_grad_norm is not None:
+                    clipped_norm = torch.nn.utils.clip_grad_norm_(
+                        self.online_q_net.parameters(),
+                        max_norm=self.max_grad_norm,
+                    )
+                    grad_norm = float(
+                        clipped_norm.item()
+                        if isinstance(clipped_norm, torch.Tensor)
+                        else clipped_norm
+                    )
                 self.optimizer.step()
 
                 soft_update(
@@ -113,6 +130,7 @@ class DQN[Observation, EnvAction]:
                     DQNLog(
                         step_index=step_index,
                         loss=loss_value,
+                        grad_norm=grad_norm,
                         reward=float(reward),
                         exploration_rate=exploration_rate,
                         terminated=terminated,
@@ -194,6 +212,21 @@ def validate_exploration_rate(exploration_rate: float) -> float:
         msg = f"exploration rate must be in [0, 1], got {exploration_rate}"
         raise ValueError(msg)
     return exploration_rate
+
+
+def build_optimizer(
+    optimizer_name: str,
+    q_net: nn.Module,
+    learning_rate: float,
+) -> torch.optim.Optimizer:
+    if optimizer_name == "adam":
+        return torch.optim.Adam(q_net.parameters(), lr=learning_rate)
+
+    if optimizer_name == "adamw":
+        return torch.optim.AdamW(q_net.parameters(), lr=learning_rate)
+
+    msg = f"optimizer_name must be one of: adam, adamw; got {optimizer_name}"
+    raise ValueError(msg)
 
 
 @torch.no_grad()

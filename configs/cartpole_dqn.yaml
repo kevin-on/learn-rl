@@ -14,9 +14,11 @@ train:
   steps: 25000
   batch_size: 64
   buffer_capacity: 50000
+  optimizer: adam
   learning_rate: 0.001
   discount_factor: 0.99
   soft_update_rate: 0.005
+  max_grad_norm: 10.0
 
 exploration:
   schedule: linear
