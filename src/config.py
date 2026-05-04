@@ -29,6 +29,7 @@ class TrainConfig:
     learning_rate: float = 1e-3
     discount_factor: float = 0.99
     soft_update_rate: float = 0.005
+    max_grad_norm: float | None = 10.0
 
 
 @dataclass(frozen=True)
@@ -162,6 +163,8 @@ def _validate_config(config: CartPoleDQNConfig) -> None:
         raise ValueError("train.learning_rate must be positive.")
     if not 0.0 <= config.train.soft_update_rate <= 1.0:
         raise ValueError("train.soft_update_rate must be in [0, 1].")
+    if config.train.max_grad_norm is not None and config.train.max_grad_norm <= 0.0:
+        raise ValueError("train.max_grad_norm must be positive or null.")
 
     if config.eval.every_steps <= 0:
         raise ValueError("eval.every_steps must be positive.")

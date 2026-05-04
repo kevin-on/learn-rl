@@ -20,6 +20,7 @@ type Experience = tuple[State, int, float, State, bool]
 class DQNLog:
     step_index: int
     loss: float | None
+    grad_norm: float | None
     reward: float
     exploration_rate: float
     terminated: bool
@@ -47,6 +48,7 @@ class DQN[Observation, EnvAction]:
         discount_factor: float,
         soft_update_rate: float,
         buffer_capacity: int,
+        max_grad_norm: float | None,
     ) -> None:
         self.task_adapter = task_adapter
         self.env = task_adapter.env
@@ -59,6 +61,7 @@ class DQN[Observation, EnvAction]:
         )
         self.discount_factor = discount_factor
         self.soft_update_rate = soft_update_rate
+        self.max_grad_norm = max_grad_norm
         self.replay_buffer: deque[Experience] = deque(maxlen=buffer_capacity)
 
     def train(
@@ -93,12 +96,23 @@ class DQN[Observation, EnvAction]:
                 state = self.task_adapter.encode_observation(observation)
 
             loss_value = None
+            grad_norm = None
             if len(self.replay_buffer) >= batch_size:
                 loss = self._compute_td_loss(batch_size)
                 loss_value = float(loss.item())
 
                 self.optimizer.zero_grad()
                 loss.backward()
+                if self.max_grad_norm is not None:
+                    clipped_norm = torch.nn.utils.clip_grad_norm_(
+                        self.online_q_net.parameters(),
+                        max_norm=self.max_grad_norm,
+                    )
+                    grad_norm = float(
+                        clipped_norm.item()
+                        if isinstance(clipped_norm, torch.Tensor)
+                        else clipped_norm
+                    )
                 self.optimizer.step()
 
                 soft_update(
@@ -113,6 +127,7 @@ class DQN[Observation, EnvAction]:
                     DQNLog(
                         step_index=step_index,
                         loss=loss_value,
+                        grad_norm=grad_norm,
                         reward=float(reward),
                         exploration_rate=exploration_rate,
                         terminated=terminated,

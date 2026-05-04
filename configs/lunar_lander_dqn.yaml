@@ -1,20 +1,20 @@
 experiment:
-  name: cartpole_dqn
+  name: lunar_lander_dqn
   run_root: runs
 
 seed: 123
 
 env:
-  id: CartPole-v1
+  id: LunarLander-v3
 
 model:
   hidden_sizes: [128, 128]
 
 train:
-  steps: 25000
+  steps: 100000
   batch_size: 64
-  buffer_capacity: 50000
-  learning_rate: 0.001
+  buffer_capacity: 100000
+  learning_rate: 0.0005
   discount_factor: 0.99
   soft_update_rate: 0.005
   max_grad_norm: 10.0
@@ -23,11 +23,11 @@ exploration:
   schedule: linear
   start: 1.0
   end: 0.05
-  decay_steps: 15000
+  decay_steps: 50000
 
 eval:
   every_steps: 5000
-  episodes: 10
+  episodes: 5
   seed: 10000
 
 logging:

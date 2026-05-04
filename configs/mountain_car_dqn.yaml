@@ -1,17 +1,17 @@
 experiment:
-  name: cartpole_dqn
+  name: mountain_car_dqn
   run_root: runs
 
 seed: 123
 
 env:
-  id: CartPole-v1
+  id: MountainCar-v0
 
 model:
   hidden_sizes: [128, 128]
 
 train:
-  steps: 25000
+  steps: 50000
   batch_size: 64
   buffer_capacity: 50000
   learning_rate: 0.001
@@ -23,11 +23,11 @@ exploration:
   schedule: linear
   start: 1.0
   end: 0.05
-  decay_steps: 15000
+  decay_steps: 40000
 
 eval:
   every_steps: 5000
-  episodes: 10
+  episodes: 5
   seed: 10000
 
 logging:

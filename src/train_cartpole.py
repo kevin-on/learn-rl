@@ -15,12 +15,14 @@ from dqn import DQN, DQNLog
 from metrics import JSONLMetricsLogger
 from plot_metrics import plot_metrics
 from schedules import ExplorationRateSchedule
-from task_adapter import CartPoleTaskAdapter
+from task_adapter import VectorTaskAdapter, make_task_adapter
 
 
-def build_q_net(num_actions: int, hidden_sizes: list[int]) -> nn.Module:
+def build_q_net(
+    state_size: int, num_actions: int, hidden_sizes: list[int]
+) -> nn.Module:
     layers: list[nn.Module] = []
-    input_size = 4
+    input_size = state_size
     for hidden_size in hidden_sizes:
         layers.extend([nn.Linear(input_size, hidden_size), nn.ReLU()])
         input_size = hidden_size
@@ -47,7 +49,7 @@ def set_random_seeds(seed: int) -> None:
 @torch.no_grad()
 def evaluate_policy(
     q_net: nn.Module,
-    task_adapter: CartPoleTaskAdapter,
+    task_adapter: VectorTaskAdapter,
     num_episodes: int,
     seed: int,
 ) -> list[float]:
@@ -86,7 +88,9 @@ def evaluate_policy(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train DQN on CartPole.")
+    parser = argparse.ArgumentParser(
+        description="Train DQN on a supported Gymnasium discrete-action task."
+    )
     parser.add_argument(
         "--config",
         type=Path,
@@ -144,11 +148,11 @@ def main() -> None:
 
     train_env = gym.wrappers.RecordEpisodeStatistics(gym.make(config.env.id))
     train_env.action_space.seed(config.seed)
-    train_adapter = CartPoleTaskAdapter(train_env)
+    train_adapter = make_task_adapter(train_env, config.env.id)
 
     eval_env = gym.make(config.env.id)
     eval_env.action_space.seed(config.eval.seed)
-    eval_adapter = CartPoleTaskAdapter(eval_env)
+    eval_adapter = make_task_adapter(eval_env, config.env.id)
 
     exploration_schedule = ExplorationRateSchedule(
         schedule=config.exploration.schedule,
@@ -156,7 +160,11 @@ def main() -> None:
         end=config.exploration.end,
         decay_steps=config.exploration.decay_steps,
     )
-    q_net = build_q_net(train_adapter.num_actions, config.model.hidden_sizes).to(device)
+    q_net = build_q_net(
+        train_adapter.state_size,
+        train_adapter.num_actions,
+        config.model.hidden_sizes,
+    ).to(device)
     agent = DQN(
         train_adapter,
         q_net,
@@ -164,6 +172,7 @@ def main() -> None:
         discount_factor=config.train.discount_factor,
         soft_update_rate=config.train.soft_update_rate,
         buffer_capacity=config.train.buffer_capacity,
+        max_grad_norm=config.train.max_grad_norm,
     )
 
     recent_returns: deque[float] = deque(maxlen=20)
@@ -173,12 +182,17 @@ def main() -> None:
         record = {
             "step": step,
             "loss": log.loss,
+            "grad_norm": log.grad_norm,
             "epsilon": log.exploration_rate,
         }
 
         if log.loss is not None and step % config.logging.loss_every_steps == 0:
+            grad_norm_text = (
+                "" if log.grad_norm is None else f" grad_norm={log.grad_norm:.4f}"
+            )
             print(
-                f"step={step:6d} loss={log.loss:.4f} epsilon={log.exploration_rate:.3f}"
+                f"step={step:6d} loss={log.loss:.4f}{grad_norm_text} "
+                f"epsilon={log.exploration_rate:.3f}"
             )
 
         if "episode" in log.info:
