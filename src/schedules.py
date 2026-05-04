@@ -31,4 +31,9 @@ class ExplorationRateSchedule:
             progress = min(step_index / self.decay_steps, 1.0)
             return self.start + progress * (self.end - self.start)
 
-        return self.end + (self.start - self.end) * exp(-step_index / self.decay_steps)
+        if self.schedule == "exponential":
+            return self.end + (self.start - self.end) * exp(
+                -step_index / self.decay_steps
+            )
+
+        raise ValueError(f"Unsupported exploration schedule: {self.schedule}")

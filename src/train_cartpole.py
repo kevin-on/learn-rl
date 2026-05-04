@@ -271,6 +271,7 @@ def main() -> None:
             agent.train(
                 num_steps=config.train.steps,
                 batch_size=config.train.batch_size,
+                learning_starts=config.train.learning_starts,
                 exploration_rate_fn=exploration_schedule.value,
                 env_seed=config.seed,
                 log_fn=log_training,

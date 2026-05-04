@@ -71,6 +71,7 @@ class DQN[Observation, EnvAction]:
         self,
         num_steps: int,
         batch_size: int,
+        learning_starts: int,
         exploration_rate_fn: ExplorationRateFn,
         env_seed: int | None = None,
         log_fn: DQNLogFn[Observation, EnvAction] | None = None,
@@ -100,7 +101,10 @@ class DQN[Observation, EnvAction]:
 
             loss_value = None
             grad_norm = None
-            if len(self.replay_buffer) >= batch_size:
+            if (
+                step_index + 1 > learning_starts
+                and len(self.replay_buffer) >= batch_size
+            ):
                 loss = self._compute_td_loss(batch_size)
                 loss_value = float(loss.item())
 
