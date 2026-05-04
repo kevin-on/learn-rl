@@ -33,6 +33,19 @@ Use `--set` with dotted config keys:
 uv run python src/train_cartpole.py --set train.steps=1000 --set seed=456
 ```
 
+Gradient clipping is configured with `train.max_grad_norm`. Set it to `null` to
+disable clipping:
+
+```sh
+uv run python src/train_cartpole.py --set train.max_grad_norm=null
+```
+
+The optimizer can be switched between `adam` and `adamw`:
+
+```sh
+uv run python src/train_cartpole.py --set train.optimizer=adamw
+```
+
 For list values, quote the shell argument:
 
 ```sh

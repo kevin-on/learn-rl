@@ -44,6 +44,7 @@ class DQN[Observation, EnvAction]:
         self,
         task_adapter: DiscreteActionTaskAdapter[Observation, EnvAction],
         q_net: nn.Module,
+        optimizer_name: str,
         learning_rate: float,
         discount_factor: float,
         soft_update_rate: float,
@@ -56,8 +57,10 @@ class DQN[Observation, EnvAction]:
         self.target_q_net = copy.deepcopy(q_net)
         self.target_q_net.eval()
         self.device = next(self.online_q_net.parameters()).device
-        self.optimizer = torch.optim.Adam(
-            self.online_q_net.parameters(), lr=learning_rate
+        self.optimizer = build_optimizer(
+            optimizer_name,
+            self.online_q_net,
+            learning_rate,
         )
         self.discount_factor = discount_factor
         self.soft_update_rate = soft_update_rate
@@ -68,6 +71,7 @@ class DQN[Observation, EnvAction]:
         self,
         num_steps: int,
         batch_size: int,
+        learning_starts: int,
         exploration_rate_fn: ExplorationRateFn,
         env_seed: int | None = None,
         log_fn: DQNLogFn[Observation, EnvAction] | None = None,
@@ -97,7 +101,10 @@ class DQN[Observation, EnvAction]:
 
             loss_value = None
             grad_norm = None
-            if len(self.replay_buffer) >= batch_size:
+            if (
+                step_index + 1 > learning_starts
+                and len(self.replay_buffer) >= batch_size
+            ):
                 loss = self._compute_td_loss(batch_size)
                 loss_value = float(loss.item())
 
@@ -209,6 +216,21 @@ def validate_exploration_rate(exploration_rate: float) -> float:
         msg = f"exploration rate must be in [0, 1], got {exploration_rate}"
         raise ValueError(msg)
     return exploration_rate
+
+
+def build_optimizer(
+    optimizer_name: str,
+    q_net: nn.Module,
+    learning_rate: float,
+) -> torch.optim.Optimizer:
+    if optimizer_name == "adam":
+        return torch.optim.Adam(q_net.parameters(), lr=learning_rate)
+
+    if optimizer_name == "adamw":
+        return torch.optim.AdamW(q_net.parameters(), lr=learning_rate)
+
+    msg = f"optimizer_name must be one of: adam, adamw; got {optimizer_name}"
+    raise ValueError(msg)
 
 
 @torch.no_grad()
