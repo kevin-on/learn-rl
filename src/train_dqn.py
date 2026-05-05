@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from config import CartPoleDQNConfig, load_config, save_config
+from config import DQNConfig, load_config, save_config
 from dqn import DQN, DQNLog
 from metrics import JSONLMetricsLogger
 from plot_metrics import plot_metrics
@@ -111,7 +111,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("configs/cartpole_dqn.yaml"),
+        required=True,
         help="Path to a YAML experiment config.",
     )
     parser.add_argument(
@@ -141,14 +141,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_config(args: argparse.Namespace) -> CartPoleDQNConfig:
+def resolve_config(args: argparse.Namespace) -> DQNConfig:
     config = load_config(args.config, overrides=args.overrides)
     if args.no_plot:
         config = replace(config, logging=replace(config.logging, save_plot=False))
     return config
 
 
-def create_run_dir(config: CartPoleDQNConfig, requested_run_dir: Path | None) -> Path:
+def create_run_dir(config: DQNConfig, requested_run_dir: Path | None) -> Path:
     if requested_run_dir is not None:
         run_dir = requested_run_dir
     else:

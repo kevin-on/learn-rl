@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from dataclasses import MISSING, asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -7,13 +7,13 @@ import yaml
 
 @dataclass(frozen=True)
 class ExperimentConfig:
-    name: str = "cartpole_dqn"
+    name: str
     run_root: str = "runs"
 
 
 @dataclass(frozen=True)
 class EnvConfig:
-    id: str = "CartPole-v1"
+    id: str
 
 
 @dataclass(frozen=True)
@@ -55,10 +55,10 @@ class LoggingConfig:
 
 
 @dataclass(frozen=True)
-class CartPoleDQNConfig:
-    experiment: ExperimentConfig = field(default_factory=ExperimentConfig)
+class DQNConfig:
+    experiment: ExperimentConfig
+    env: EnvConfig
     seed: int = 123
-    env: EnvConfig = field(default_factory=EnvConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     exploration: ExplorationConfig = field(default_factory=ExplorationConfig)
@@ -66,9 +66,7 @@ class CartPoleDQNConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
-def load_config(
-    config_path: Path, overrides: list[str] | None = None
-) -> CartPoleDQNConfig:
+def load_config(config_path: Path, overrides: list[str] | None = None) -> DQNConfig:
     raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     if not isinstance(raw_config, dict):
         msg = f"Config root must be a mapping: {config_path}"
@@ -77,19 +75,19 @@ def load_config(
     for override in overrides or []:
         _apply_override(raw_config, override)
 
-    config = _from_dict(CartPoleDQNConfig, raw_config, path="config")
+    config = _from_dict(DQNConfig, raw_config, path="config")
     _validate_config(config)
     return config
 
 
-def save_config(config: CartPoleDQNConfig, config_path: Path) -> None:
+def save_config(config: DQNConfig, config_path: Path) -> None:
     config_path.write_text(
         yaml.safe_dump(asdict(config), sort_keys=False),
         encoding="utf-8",
     )
 
 
-def config_to_dict(config: CartPoleDQNConfig) -> dict[str, Any]:
+def config_to_dict(config: DQNConfig) -> dict[str, Any]:
     return asdict(config)
 
 
@@ -106,6 +104,17 @@ def _from_dict(config_type: type[Any], data: Any, path: str) -> Any:
     if unknown_keys:
         keys = ", ".join(unknown_keys)
         msg = f"Unknown config key(s) at {path}: {keys}"
+        raise ValueError(msg)
+
+    required_keys = {
+        name
+        for name, field_info in field_by_name.items()
+        if field_info.default is MISSING and field_info.default_factory is MISSING
+    }
+    missing_keys = sorted(required_keys - set(data))
+    if missing_keys:
+        keys = ", ".join(missing_keys)
+        msg = f"Missing config key(s) at {path}: {keys}"
         raise ValueError(msg)
 
     kwargs: dict[str, Any] = {}
@@ -143,7 +152,7 @@ def _apply_override(config: dict[str, Any], override: str) -> None:
     cursor[path[-1]] = yaml.safe_load(raw_value)
 
 
-def _validate_config(config: CartPoleDQNConfig) -> None:
+def _validate_config(config: DQNConfig) -> None:
     if config.seed < 0:
         raise ValueError("seed must be non-negative.")
 

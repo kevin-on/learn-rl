@@ -5,17 +5,15 @@ Small DQN experiments for Gymnasium tasks.
 ## Train DQN
 
 ```sh
-uv run python src/train_cartpole.py
+uv run python src/train_dqn.py --config configs/acrobot_dqn.yaml
 ```
 
-The default experiment config lives at `configs/cartpole_dqn.yaml`. Additional
-discrete-action task configs are available:
+Discrete-action task configs are available under `configs/`:
 
-```sh
-uv run python src/train_cartpole.py --config configs/mountain_car_dqn.yaml
-uv run python src/train_cartpole.py --config configs/acrobot_dqn.yaml
-uv run python src/train_cartpole.py --config configs/lunar_lander_dqn.yaml
-```
+- `configs/acrobot_dqn.yaml`
+- `configs/cartpole_dqn.yaml`
+- `configs/lunar_lander_dqn.yaml`
+- `configs/mountain_car_dqn.yaml`
 
 Each run writes:
 
@@ -30,20 +28,20 @@ By default outputs go under `runs/`, which is git-ignored.
 Use `--set` with dotted config keys:
 
 ```sh
-uv run python src/train_cartpole.py --set train.steps=1000 --set seed=456
+uv run python src/train_dqn.py --config configs/acrobot_dqn.yaml --set train.steps=1000 --set seed=456
 ```
 
 Gradient clipping is configured with `train.max_grad_norm`. Set it to `null` to
 disable clipping:
 
 ```sh
-uv run python src/train_cartpole.py --set train.max_grad_norm=null
+uv run python src/train_dqn.py --config configs/acrobot_dqn.yaml --set train.max_grad_norm=null
 ```
 
 For list values, quote the shell argument:
 
 ```sh
-uv run python src/train_cartpole.py --set 'model.hidden_sizes=[64, 64]'
+uv run python src/train_dqn.py --config configs/acrobot_dqn.yaml --set 'model.hidden_sizes=[64, 64]'
 ```
 
 ## Replot Existing Metrics
