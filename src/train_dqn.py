@@ -195,6 +195,8 @@ def main() -> None:
         discount_factor=config.train.discount_factor,
         soft_update_rate=config.train.soft_update_rate,
         buffer_capacity=config.train.buffer_capacity,
+        batch_size=config.train.batch_size,
+        learning_starts=config.train.learning_starts,
         max_grad_norm=config.train.max_grad_norm,
     )
 
@@ -277,8 +279,6 @@ def main() -> None:
         try:
             agent.train(
                 num_steps=config.train.steps,
-                batch_size=config.train.batch_size,
-                learning_starts=config.train.learning_starts,
                 exploration_rate_fn=exploration_schedule.value,
                 env_seed=config.seed,
                 log_fn=log_training,

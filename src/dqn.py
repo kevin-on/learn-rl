@@ -44,12 +44,24 @@ class DQN[Observation, EnvAction]:
         self,
         task_adapter: DiscreteActionTaskAdapter[Observation, EnvAction],
         q_net: nn.Module,
+        *,
         learning_rate: float,
         discount_factor: float,
         soft_update_rate: float,
         buffer_capacity: int,
+        batch_size: int,
+        learning_starts: int,
         max_grad_norm: float | None,
     ) -> None:
+        validate_dqn_hyperparameters(
+            learning_rate=learning_rate,
+            discount_factor=discount_factor,
+            soft_update_rate=soft_update_rate,
+            buffer_capacity=buffer_capacity,
+            batch_size=batch_size,
+            learning_starts=learning_starts,
+            max_grad_norm=max_grad_norm,
+        )
         self.task_adapter = task_adapter
         self.env = task_adapter.env
         self.online_q_net = q_net
@@ -61,14 +73,14 @@ class DQN[Observation, EnvAction]:
         )
         self.discount_factor = discount_factor
         self.soft_update_rate = soft_update_rate
+        self.batch_size = batch_size
+        self.learning_starts = learning_starts
         self.max_grad_norm = max_grad_norm
         self.replay_buffer: deque[Experience] = deque(maxlen=buffer_capacity)
 
     def train(
         self,
         num_steps: int,
-        batch_size: int,
-        learning_starts: int,
         exploration_rate_fn: ExplorationRateFn,
         env_seed: int | None = None,
         log_fn: DQNLogFn[Observation, EnvAction] | None = None,
@@ -99,10 +111,10 @@ class DQN[Observation, EnvAction]:
             loss_value = None
             grad_norm = None
             if (
-                step_index + 1 > learning_starts
-                and len(self.replay_buffer) >= batch_size
+                step_index + 1 > self.learning_starts
+                and len(self.replay_buffer) >= self.batch_size
             ):
-                loss = self._compute_td_loss(batch_size)
+                loss = self._compute_td_loss()
                 loss_value = float(loss.item())
 
                 self.optimizer.zero_grad()
@@ -159,8 +171,8 @@ class DQN[Observation, EnvAction]:
         env_action = self.task_adapter.action_index_to_env_action(action_index)
         return action_index, env_action
 
-    def _compute_td_loss(self, batch_size: int) -> torch.Tensor:
-        batch = random.sample(self.replay_buffer, batch_size)
+    def _compute_td_loss(self) -> torch.Tensor:
+        batch = random.sample(self.replay_buffer, self.batch_size)
         states, action_indices, rewards, next_states, terminals = zip(
             *batch, strict=False
         )
@@ -213,6 +225,32 @@ def validate_exploration_rate(exploration_rate: float) -> float:
         msg = f"exploration rate must be in [0, 1], got {exploration_rate}"
         raise ValueError(msg)
     return exploration_rate
+
+
+def validate_dqn_hyperparameters(
+    *,
+    learning_rate: float,
+    discount_factor: float,
+    soft_update_rate: float,
+    buffer_capacity: int,
+    batch_size: int,
+    learning_starts: int,
+    max_grad_norm: float | None,
+) -> None:
+    if learning_rate <= 0.0:
+        raise ValueError("learning_rate must be positive.")
+    if not 0.0 <= discount_factor <= 1.0:
+        raise ValueError("discount_factor must be in [0, 1].")
+    if not 0.0 <= soft_update_rate <= 1.0:
+        raise ValueError("soft_update_rate must be in [0, 1].")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive.")
+    if buffer_capacity < batch_size:
+        raise ValueError("buffer_capacity must be at least batch_size.")
+    if learning_starts < 0:
+        raise ValueError("learning_starts must be non-negative.")
+    if max_grad_norm is not None and max_grad_norm <= 0.0:
+        raise ValueError("max_grad_norm must be positive or None.")
 
 
 @torch.no_grad()
