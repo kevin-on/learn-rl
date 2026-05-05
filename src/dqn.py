@@ -44,7 +44,6 @@ class DQN[Observation, EnvAction]:
         self,
         task_adapter: DiscreteActionTaskAdapter[Observation, EnvAction],
         q_net: nn.Module,
-        optimizer_name: str,
         learning_rate: float,
         discount_factor: float,
         soft_update_rate: float,
@@ -57,10 +56,8 @@ class DQN[Observation, EnvAction]:
         self.target_q_net = copy.deepcopy(q_net)
         self.target_q_net.eval()
         self.device = next(self.online_q_net.parameters()).device
-        self.optimizer = build_optimizer(
-            optimizer_name,
-            self.online_q_net,
-            learning_rate,
+        self.optimizer = torch.optim.Adam(
+            self.online_q_net.parameters(), lr=learning_rate
         )
         self.discount_factor = discount_factor
         self.soft_update_rate = soft_update_rate
@@ -216,21 +213,6 @@ def validate_exploration_rate(exploration_rate: float) -> float:
         msg = f"exploration rate must be in [0, 1], got {exploration_rate}"
         raise ValueError(msg)
     return exploration_rate
-
-
-def build_optimizer(
-    optimizer_name: str,
-    q_net: nn.Module,
-    learning_rate: float,
-) -> torch.optim.Optimizer:
-    if optimizer_name == "adam":
-        return torch.optim.Adam(q_net.parameters(), lr=learning_rate)
-
-    if optimizer_name == "adamw":
-        return torch.optim.AdamW(q_net.parameters(), lr=learning_rate)
-
-    msg = f"optimizer_name must be one of: adam, adamw; got {optimizer_name}"
-    raise ValueError(msg)
 
 
 @torch.no_grad()

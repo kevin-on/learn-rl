@@ -15,7 +15,6 @@ train:
   batch_size: 32
   buffer_capacity: 50000
   learning_starts: 1000
-  optimizer: adam
   learning_rate: 0.001
   discount_factor: 1.0
   soft_update_rate: 0.005

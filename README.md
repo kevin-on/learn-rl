@@ -40,12 +40,6 @@ disable clipping:
 uv run python src/train_cartpole.py --set train.max_grad_norm=null
 ```
 
-The optimizer can be switched between `adam` and `adamw`:
-
-```sh
-uv run python src/train_cartpole.py --set train.optimizer=adamw
-```
-
 For list values, quote the shell argument:
 
 ```sh

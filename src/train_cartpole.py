@@ -191,7 +191,6 @@ def main() -> None:
     agent = DQN(
         train_adapter,
         q_net,
-        optimizer_name=config.train.optimizer,
         learning_rate=config.train.learning_rate,
         discount_factor=config.train.discount_factor,
         soft_update_rate=config.train.soft_update_rate,

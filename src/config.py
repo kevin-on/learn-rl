@@ -27,7 +27,6 @@ class TrainConfig:
     batch_size: int = 64
     buffer_capacity: int = 50_000
     learning_starts: int = 0
-    optimizer: str = "adam"
     learning_rate: float = 1e-3
     discount_factor: float = 0.99
     soft_update_rate: float = 0.005
@@ -161,8 +160,6 @@ def _validate_config(config: CartPoleDQNConfig) -> None:
         raise ValueError("train.buffer_capacity must be at least train.batch_size.")
     if config.train.learning_starts < 0:
         raise ValueError("train.learning_starts must be non-negative.")
-    if config.train.optimizer not in {"adam", "adamw"}:
-        raise ValueError("train.optimizer must be one of: adam, adamw.")
     if not 0.0 <= config.train.discount_factor <= 1.0:
         raise ValueError("train.discount_factor must be in [0, 1].")
     if config.train.learning_rate <= 0.0:

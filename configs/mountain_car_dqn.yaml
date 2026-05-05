@@ -11,23 +11,24 @@ model:
   hidden_sizes: [128, 128]
 
 train:
-  steps: 50000
-  batch_size: 64
+  steps: 100000
+  batch_size: 32
   buffer_capacity: 50000
+  learning_starts: 1000
   learning_rate: 0.001
-  discount_factor: 0.99
+  discount_factor: 1.0
   soft_update_rate: 0.005
   max_grad_norm: 10.0
 
 exploration:
   schedule: linear
   start: 1.0
-  end: 0.05
-  decay_steps: 40000
+  end: 0.02
+  decay_steps: 2500
 
 eval:
   every_steps: 5000
-  episodes: 5
+  episodes: 10
   seed: 10000
 
 logging:
