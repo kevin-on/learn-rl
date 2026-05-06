@@ -38,6 +38,7 @@ def plot_metrics(
 
     _plot_returns(axes[0], records)
     _plot_loss(axes[1], records)
+    # TODO: Move algorithm-specific metric choices into train scripts.
     _plot_epsilon(axes[2], records)
 
     axes[2].set_xlabel("environment step")
@@ -92,8 +93,28 @@ def _plot_returns(ax: Any, records: list[dict[str, Any]]) -> None:
 
 def _plot_loss(ax: Any, records: list[dict[str, Any]]) -> None:
     loss_steps, losses = _series(records, "loss")
+    policy_loss_steps, policy_losses = _series(records, "policy_loss")
+    value_loss_steps, value_losses = _series(records, "value_loss")
     if loss_steps:
-        ax.plot(loss_steps, losses, color="#54a24b", linewidth=1.0, label="td loss")
+        ax.plot(loss_steps, losses, color="#54a24b", linewidth=1.0, label="loss")
+    if policy_loss_steps:
+        ax.plot(
+            policy_loss_steps,
+            policy_losses,
+            color="#4c78a8",
+            alpha=0.8,
+            linewidth=1.0,
+            label="policy loss",
+        )
+    if value_loss_steps:
+        ax.plot(
+            value_loss_steps,
+            value_losses,
+            color="#f58518",
+            alpha=0.8,
+            linewidth=1.0,
+            label="value loss",
+        )
     _finish_axis(ax, ylabel="loss")
 
 
@@ -107,7 +128,19 @@ def _plot_epsilon(ax: Any, records: list[dict[str, Any]]) -> None:
             linewidth=1.5,
             label="epsilon",
         )
-    _finish_axis(ax, ylabel="epsilon")
+        _finish_axis(ax, ylabel="epsilon")
+        return
+
+    grad_norm_steps, grad_norms = _series(records, "grad_norm")
+    if grad_norm_steps:
+        ax.plot(
+            grad_norm_steps,
+            grad_norms,
+            color="#b279a2",
+            linewidth=1.5,
+            label="grad norm",
+        )
+    _finish_axis(ax, ylabel="grad norm")
 
 
 def _series(records: list[dict[str, Any]], key: str) -> tuple[list[int], list[float]]:

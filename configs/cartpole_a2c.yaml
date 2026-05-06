@@ -1,0 +1,28 @@
+experiment:
+  name: cartpole_a2c
+  run_root: runs
+
+seed: 123
+
+env:
+  id: CartPole-v1
+
+model:
+  hidden_sizes: [128, 128]
+
+train:
+  steps: 100000
+  policy_learning_rate: 0.001
+  value_learning_rate: 0.001
+  discount_factor: 0.99
+  rollout_steps: 5
+  max_grad_norm: 10.0
+
+eval:
+  every_steps: 5000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 1000
+  save_plot: true
