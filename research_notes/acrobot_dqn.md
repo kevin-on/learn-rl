@@ -1,4 +1,4 @@
-# Acrobot DQN 100k One-Factor Ablation
+# Acrobot DQN Report
 
 Date: 2026-05-05
 
@@ -48,20 +48,20 @@ to the best region. The only follow-up candidates from this sweep are
 
 ### Learning Rate
 
-![Learning rate core metrics](acrobot_dqn_100k_ablation_assets/learning_rate_core_metrics.png)
+![Learning rate core metrics](acrobot_dqn_assets/learning_rate_core_metrics.png)
 
 ### Batch Size
 
-![Batch size core metrics](acrobot_dqn_100k_ablation_assets/batch_size_core_metrics.png)
+![Batch size core metrics](acrobot_dqn_assets/batch_size_core_metrics.png)
 
 ### Soft Update Rate
 
-![Soft update rate core metrics](acrobot_dqn_100k_ablation_assets/soft_update_rate_core_metrics.png)
+![Soft update rate core metrics](acrobot_dqn_assets/soft_update_rate_core_metrics.png)
 
 ### Epsilon End
 
-![Epsilon end core metrics](acrobot_dqn_100k_ablation_assets/epsilon_end_core_metrics.png)
+![Epsilon end core metrics](acrobot_dqn_assets/epsilon_end_core_metrics.png)
 
 ### Epsilon Decay Steps
 
-![Epsilon decay steps core metrics](acrobot_dqn_100k_ablation_assets/epsilon_decay_steps_core_metrics.png)
+![Epsilon decay steps core metrics](acrobot_dqn_assets/epsilon_decay_steps_core_metrics.png)

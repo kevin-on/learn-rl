@@ -1,4 +1,4 @@
-# CartPole DQN 100k One-Factor Ablation
+# CartPole DQN Report
 
 Date: 2026-05-04
 
@@ -40,20 +40,20 @@ This is a single-seed screening run, so these results should be treated as candi
 
 ### Learning Rate
 
-![Learning rate core metrics](cartpole_dqn_100k_ablation_assets/learning_rate_core_metrics.png)
+![Learning rate core metrics](cartpole_dqn_assets/learning_rate_core_metrics.png)
 
 ### Discount Factor
 
-![Discount factor core metrics](cartpole_dqn_100k_ablation_assets/discount_factor_core_metrics.png)
+![Discount factor core metrics](cartpole_dqn_assets/discount_factor_core_metrics.png)
 
 ### Soft Update Rate
 
-![Soft update rate core metrics](cartpole_dqn_100k_ablation_assets/soft_update_rate_core_metrics.png)
+![Soft update rate core metrics](cartpole_dqn_assets/soft_update_rate_core_metrics.png)
 
 ### Epsilon Decay Steps
 
-![Epsilon decay steps core metrics](cartpole_dqn_100k_ablation_assets/epsilon_decay_steps_core_metrics.png)
+![Epsilon decay steps core metrics](cartpole_dqn_assets/epsilon_decay_steps_core_metrics.png)
 
 ### Max Grad Norm
 
-![Max grad norm core metrics](cartpole_dqn_100k_ablation_assets/max_grad_norm_core_metrics.png)
+![Max grad norm core metrics](cartpole_dqn_assets/max_grad_norm_core_metrics.png)

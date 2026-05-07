@@ -1,4 +1,4 @@
-# LunarLander DQN 100k 5-Seed Sweep
+# LunarLander DQN Report
 
 Date: 2026-05-07
 
@@ -70,9 +70,8 @@ adding checkpoint-on-best-eval before more hyperparameter search.
 
 ### Final Eval Summary
 
-![Final eval summary](lunar_lander_dqn_100k_5seed_sweep_assets/summary_final_eval_5seeds.png)
+![Final eval summary](lunar_lander_dqn_assets/summary_final_eval_5seeds.png)
 
 ### Best Eval Summary
 
-![Best eval summary](lunar_lander_dqn_100k_5seed_sweep_assets/summary_best_eval_5seeds.png)
-
+![Best eval summary](lunar_lander_dqn_assets/summary_best_eval_5seeds.png)
