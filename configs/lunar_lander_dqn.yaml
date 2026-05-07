@@ -17,13 +17,13 @@ train:
   learning_starts: 1000
   learning_rate: 0.001
   discount_factor: 1.0
-  soft_update_rate: 0.005
+  soft_update_rate: 0.001
   max_grad_norm: 10.0
 
 exploration:
   schedule: linear
   start: 1.0
-  end: 0.02
+  end: 0.10
   decay_steps: 2500
 
 eval:
