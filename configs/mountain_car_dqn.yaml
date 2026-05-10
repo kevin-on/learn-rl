@@ -8,14 +8,14 @@ env:
   id: MountainCar-v0
 
 model:
-  hidden_sizes: [128, 128]
+  hidden_sizes: [256]
 
 train:
-  steps: 100000
+  steps: 250000
   batch_size: 32
   buffer_capacity: 50000
   learning_starts: 1000
-  learning_rate: 0.001
+  learning_rate: 0.0007
   discount_factor: 1.0
   soft_update_rate: 0.005
   max_grad_norm: 10.0
@@ -23,8 +23,8 @@ train:
 exploration:
   schedule: linear
   start: 1.0
-  end: 0.02
-  decay_steps: 2500
+  end: 0.0
+  decay_steps: 75000
 
 eval:
   every_steps: 5000
