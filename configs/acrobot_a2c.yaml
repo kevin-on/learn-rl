@@ -1,0 +1,28 @@
+experiment:
+  name: acrobot_a2c
+  run_root: runs
+
+seed: 123
+
+env:
+  id: Acrobot-v1
+
+model:
+  hidden_sizes: [64, 64]
+
+train:
+  steps: 80000
+  policy_learning_rate: 0.0007
+  value_learning_rate: 0.0007
+  discount_factor: 0.995
+  rollout_steps: 10
+  max_grad_norm: 0.5
+
+eval:
+  every_steps: 5000
+  episodes: 5
+  seed: 10000
+
+logging:
+  loss_every_steps: 1000
+  save_plot: true

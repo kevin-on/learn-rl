@@ -1,0 +1,28 @@
+experiment:
+  name: mountain_car_a2c
+  run_root: runs
+
+seed: 456
+
+env:
+  id: MountainCar-v0
+
+model:
+  hidden_sizes: [256]
+
+train:
+  steps: 500000
+  policy_learning_rate: 0.0003
+  value_learning_rate: 0.0001
+  discount_factor: 0.999
+  rollout_steps: 100
+  max_grad_norm: null
+
+eval:
+  every_steps: 10000
+  episodes: 5
+  seed: 10000
+
+logging:
+  loss_every_steps: 1000
+  save_plot: true
