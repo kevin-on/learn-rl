@@ -1,0 +1,31 @@
+experiment:
+  name: cartpole_a3c
+  run_root: runs
+
+seed: 123
+
+env:
+  id: CartPole-v1
+
+model:
+  hidden_sizes: [128, 128]
+
+train:
+  steps: 140000
+  num_workers: 16
+  learning_rate: 0.001
+  discount_factor: 0.99
+  rollout_steps: 20
+  max_grad_norm: 0.5
+  entropy_coef: 0.01
+  rmsprop_alpha: 0.99
+  rmsprop_eps: 0.00001
+
+eval:
+  every_steps: 5000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 1000
+  save_plot: true

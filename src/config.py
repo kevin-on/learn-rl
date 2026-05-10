@@ -44,6 +44,19 @@ class A2CTrainConfig:
 
 
 @dataclass(frozen=True)
+class A3CTrainConfig:
+    steps: int = 25_000
+    num_workers: int = 4
+    learning_rate: float = 1e-3
+    discount_factor: float = 0.99
+    rollout_steps: int = 5
+    max_grad_norm: float | None = 10.0
+    entropy_coef: float = 0.01
+    rmsprop_alpha: float = 0.99
+    rmsprop_eps: float = 1e-5
+
+
+@dataclass(frozen=True)
 class ExplorationConfig:
     schedule: str = "linear"
     start: float = 1.0
@@ -87,7 +100,18 @@ class A2CConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
-type ExperimentRunConfig = DQNConfig | A2CConfig
+@dataclass(frozen=True)
+class A3CConfig:
+    experiment: ExperimentConfig
+    env: EnvConfig
+    seed: int = 123
+    model: ModelConfig = field(default_factory=ModelConfig)
+    train: A3CTrainConfig = field(default_factory=A3CTrainConfig)
+    eval: EvalConfig = field(default_factory=EvalConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
+
+
+type ExperimentRunConfig = DQNConfig | A2CConfig | A3CConfig
 
 
 def load_config(config_path: Path, overrides: list[str] | None = None) -> DQNConfig:
@@ -115,6 +139,20 @@ def load_a2c_config(config_path: Path, overrides: list[str] | None = None) -> A2
 
     config = _from_dict(A2CConfig, raw_config, path="config")
     _validate_a2c_config(config)
+    return config
+
+
+def load_a3c_config(config_path: Path, overrides: list[str] | None = None) -> A3CConfig:
+    raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw_config, dict):
+        msg = f"Config root must be a mapping: {config_path}"
+        raise ValueError(msg)
+
+    for override in overrides or []:
+        _apply_override(raw_config, override)
+
+    config = _from_dict(A3CConfig, raw_config, path="config")
+    _validate_a3c_config(config)
     return config
 
 
@@ -246,3 +284,26 @@ def _validate_a2c_config(config: A2CConfig) -> None:
         raise ValueError("train.rollout_steps must be positive.")
     if config.train.max_grad_norm is not None and config.train.max_grad_norm <= 0.0:
         raise ValueError("train.max_grad_norm must be positive or null.")
+
+
+def _validate_a3c_config(config: A3CConfig) -> None:
+    _validate_common_config(config)
+
+    if config.train.steps <= 0:
+        raise ValueError("train.steps must be positive.")
+    if config.train.num_workers <= 0:
+        raise ValueError("train.num_workers must be positive.")
+    if config.train.learning_rate <= 0.0:
+        raise ValueError("train.learning_rate must be positive.")
+    if not 0.0 <= config.train.discount_factor <= 1.0:
+        raise ValueError("train.discount_factor must be in [0, 1].")
+    if config.train.rollout_steps <= 0:
+        raise ValueError("train.rollout_steps must be positive.")
+    if config.train.max_grad_norm is not None and config.train.max_grad_norm <= 0.0:
+        raise ValueError("train.max_grad_norm must be positive or null.")
+    if config.train.entropy_coef < 0.0:
+        raise ValueError("train.entropy_coef must be non-negative.")
+    if not 0.0 <= config.train.rmsprop_alpha < 1.0:
+        raise ValueError("train.rmsprop_alpha must be in [0, 1).")
+    if config.train.rmsprop_eps <= 0.0:
+        raise ValueError("train.rmsprop_eps must be positive.")
