@@ -172,6 +172,7 @@ class PPO:
         values = torch.empty((rollout_steps, self.num_envs), device=self.device)
         next_values = torch.empty((rollout_steps, self.num_envs), device=self.device)
         episodes: list[PPOEpisode] = []
+        previous_non_done_slots: torch.Tensor | None = None
 
         for rollout_index in range(rollout_steps):
             observation_tensor = torch.as_tensor(observation, device=self.device)
@@ -183,6 +184,11 @@ class PPO:
             logits, value = self.model(observation_tensor)
             assert logits.shape == (self.num_envs, self.num_actions)
             assert value.shape == (self.num_envs,)
+            if previous_non_done_slots is not None:
+                assert rollout_index > 0
+                next_values[rollout_index - 1, previous_non_done_slots] = value[
+                    previous_non_done_slots
+                ]
 
             dist = torch.distributions.Categorical(logits=logits)
             action_index = dist.sample()
@@ -195,11 +201,6 @@ class PPO:
             assert step.truncated.shape == (self.num_envs,)
             assert step.env_id.shape == (self.num_envs,)
             next_observation = np.array(step.observation, copy=True)
-            next_logits, next_value = self.model(
-                torch.as_tensor(next_observation, device=self.device)
-            )
-            assert next_logits.shape == (self.num_envs, self.num_actions)
-            assert next_value.shape == (self.num_envs,)
 
             actions[rollout_index] = action_index
             rewards[rollout_index] = torch.as_tensor(
@@ -213,9 +214,45 @@ class PPO:
             )
             old_log_probs[rollout_index] = log_prob
             values[rollout_index] = value
-            next_values[rollout_index] = next_value
 
             done = np.logical_or(step.terminated, step.truncated)
+            terminated_slots = np.flatnonzero(step.terminated)
+            if len(terminated_slots) > 0:
+                terminated_slot_indices = torch.as_tensor(
+                    terminated_slots,
+                    dtype=torch.int64,
+                    device=self.device,
+                )
+                next_values[rollout_index, terminated_slot_indices] = 0.0
+
+            bootstrap_slots = np.flatnonzero(
+                np.logical_and(step.truncated, np.logical_not(step.terminated))
+            )
+            if len(bootstrap_slots) > 0:
+                bootstrap_slot_indices = torch.as_tensor(
+                    bootstrap_slots,
+                    dtype=torch.int64,
+                    device=self.device,
+                )
+                _, bootstrap_value = self.model(
+                    torch.as_tensor(
+                        step.observation[bootstrap_slots],
+                        device=self.device,
+                    )
+                )
+                assert bootstrap_value.shape == (len(bootstrap_slots),)
+                next_values[rollout_index, bootstrap_slot_indices] = bootstrap_value
+
+            non_done_slots = np.flatnonzero(np.logical_not(done))
+            if len(non_done_slots) > 0:
+                previous_non_done_slots = torch.as_tensor(
+                    non_done_slots,
+                    dtype=torch.int64,
+                    device=self.device,
+                )
+            else:
+                previous_non_done_slots = None
+
             self._episode_returns += step.reward.astype(np.float64)
             self._episode_lengths += 1
             if np.any(done):
@@ -239,6 +276,18 @@ class PPO:
                 next_observation[done_slots] = reset_observation
 
             observation = next_observation
+
+        if previous_non_done_slots is not None:
+            observation_tensor = torch.as_tensor(observation, device=self.device)
+            assert observation_tensor.shape == (
+                self.num_envs,
+                *self.env.observation_shape,
+            )
+            _, value = self.model(observation_tensor)
+            assert value.shape == (self.num_envs,)
+            next_values[rollout_steps - 1, previous_non_done_slots] = value[
+                previous_non_done_slots
+            ]
 
         return _Rollout(
             observations=observations,
