@@ -7,24 +7,24 @@ seed: 123
 env:
   id: CartPole-v1
   kind: vector
-  num_envs: 16
+  num_envs: 8
 
 model:
   name: mlp
   kwargs:
-    hidden_sizes: [128, 128]
+    hidden_sizes: [64, 64]
 
 train:
-  steps: 140000
-  learning_rate: 0.0003
-  discount_factor: 0.99
-  gae_lambda: 0.95
-  rollout_steps: 128
+  steps: 100000
+  learning_rate: 0.0005
+  discount_factor: 0.98
+  gae_lambda: 0.8
+  rollout_steps: 32
   minibatch_size: 256
-  epochs: 4
+  epochs: 20
   clip_coef: 0.2
   value_coef: 0.5
-  entropy_coef: 0.01
+  entropy_coef: 0.0
   max_grad_norm: 0.5
 
 eval:
