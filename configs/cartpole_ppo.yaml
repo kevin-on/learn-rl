@@ -1,0 +1,37 @@
+experiment:
+  name: cartpole_ppo
+  run_root: runs
+
+seed: 123
+
+env:
+  id: CartPole-v1
+  kind: vector
+  num_envs: 16
+
+model:
+  name: mlp
+  kwargs:
+    hidden_sizes: [128, 128]
+
+train:
+  steps: 140000
+  learning_rate: 0.0003
+  discount_factor: 0.99
+  gae_lambda: 0.95
+  rollout_steps: 128
+  minibatch_size: 256
+  epochs: 4
+  clip_coef: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+
+eval:
+  every_steps: 5000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 1000
+  save_plot: true

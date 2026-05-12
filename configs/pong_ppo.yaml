@@ -1,0 +1,45 @@
+experiment:
+  name: pong_ppo
+  run_root: runs
+
+seed: 123
+
+env:
+  id: Pong-v5
+  kind: atari
+  num_envs: 8
+  stack_num: 4
+  frame_skip: 4
+  noop_max: 30
+  episodic_life: false
+  reward_clip: false
+  img_height: 84
+  img_width: 84
+  gray_scale: true
+
+model:
+  name: atari_cnn
+  kwargs:
+    hidden_size: 256
+
+train:
+  steps: 10000000
+  learning_rate: 0.00025
+  discount_factor: 0.99
+  gae_lambda: 0.95
+  rollout_steps: 128
+  minibatch_size: 256
+  epochs: 3
+  clip_coef: 0.1
+  value_coef: 1.0
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+
+eval:
+  every_steps: 100000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 10000
+  save_plot: true

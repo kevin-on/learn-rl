@@ -17,8 +17,29 @@ class EnvConfig:
 
 
 @dataclass(frozen=True)
+class PPOEnvConfig:
+    id: str
+    kind: str = "vector"
+    num_envs: int = 16
+    stack_num: int = 4
+    frame_skip: int = 4
+    noop_max: int = 30
+    episodic_life: bool = False
+    reward_clip: bool = False
+    img_height: int = 84
+    img_width: int = 84
+    gray_scale: bool = True
+
+
+@dataclass(frozen=True)
 class ModelConfig:
     hidden_sizes: list[int] = field(default_factory=lambda: [128, 128])
+
+
+@dataclass(frozen=True)
+class PPOModelConfig:
+    name: str
+    kwargs: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -54,6 +75,21 @@ class A3CTrainConfig:
     entropy_coef: float = 0.01
     rmsprop_alpha: float = 0.99
     rmsprop_eps: float = 1e-5
+
+
+@dataclass(frozen=True)
+class PPOTrainConfig:
+    steps: int = 25_000
+    learning_rate: float = 3e-4
+    discount_factor: float = 0.99
+    gae_lambda: float = 0.95
+    rollout_steps: int = 128
+    minibatch_size: int = 256
+    epochs: int = 4
+    clip_coef: float = 0.2
+    value_coef: float = 0.5
+    entropy_coef: float = 0.01
+    max_grad_norm: float | None = 0.5
 
 
 @dataclass(frozen=True)
@@ -111,7 +147,18 @@ class A3CConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
-type ExperimentRunConfig = DQNConfig | A2CConfig | A3CConfig
+@dataclass(frozen=True)
+class PPOConfig:
+    experiment: ExperimentConfig
+    env: PPOEnvConfig
+    seed: int = 123
+    model: PPOModelConfig = field(default_factory=lambda: PPOModelConfig(name="mlp"))
+    train: PPOTrainConfig = field(default_factory=PPOTrainConfig)
+    eval: EvalConfig = field(default_factory=EvalConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
+
+
+type ExperimentRunConfig = DQNConfig | A2CConfig | A3CConfig | PPOConfig
 
 
 def load_config(config_path: Path, overrides: list[str] | None = None) -> DQNConfig:
@@ -153,6 +200,20 @@ def load_a3c_config(config_path: Path, overrides: list[str] | None = None) -> A3
 
     config = _from_dict(A3CConfig, raw_config, path="config")
     _validate_a3c_config(config)
+    return config
+
+
+def load_ppo_config(config_path: Path, overrides: list[str] | None = None) -> PPOConfig:
+    raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw_config, dict):
+        msg = f"Config root must be a mapping: {config_path}"
+        raise ValueError(msg)
+
+    for override in overrides or []:
+        _apply_override(raw_config, override)
+
+    config = _from_dict(PPOConfig, raw_config, path="config")
+    _validate_ppo_config(config)
     return config
 
 
@@ -232,11 +293,6 @@ def _validate_common_config(config: ExperimentRunConfig) -> None:
     if config.seed < 0:
         raise ValueError("seed must be non-negative.")
 
-    if not config.model.hidden_sizes:
-        raise ValueError("model.hidden_sizes must not be empty.")
-    if any(hidden_size <= 0 for hidden_size in config.model.hidden_sizes):
-        raise ValueError("model.hidden_sizes values must be positive.")
-
     if config.eval.every_steps <= 0:
         raise ValueError("eval.every_steps must be positive.")
     if config.eval.episodes <= 0:
@@ -248,8 +304,25 @@ def _validate_common_config(config: ExperimentRunConfig) -> None:
         raise ValueError("logging.loss_every_steps must be positive.")
 
 
+def _validate_model_config(config: ModelConfig) -> None:
+    if not config.hidden_sizes:
+        raise ValueError("model.hidden_sizes must not be empty.")
+    if any(hidden_size <= 0 for hidden_size in config.hidden_sizes):
+        raise ValueError("model.hidden_sizes values must be positive.")
+
+
+def _validate_ppo_model_config(config: PPOModelConfig) -> None:
+    if not isinstance(config.name, str) or not config.name:
+        raise ValueError("model.name must be a non-empty string.")
+    if not isinstance(config.kwargs, dict):
+        raise ValueError("model.kwargs must be a mapping.")
+    if any(not isinstance(key, str) for key in config.kwargs):
+        raise ValueError("model.kwargs keys must be strings.")
+
+
 def _validate_dqn_config(config: DQNConfig) -> None:
     _validate_common_config(config)
+    _validate_model_config(config.model)
 
     if config.train.steps <= 0:
         raise ValueError("train.steps must be positive.")
@@ -271,6 +344,7 @@ def _validate_dqn_config(config: DQNConfig) -> None:
 
 def _validate_a2c_config(config: A2CConfig) -> None:
     _validate_common_config(config)
+    _validate_model_config(config.model)
 
     if config.train.steps <= 0:
         raise ValueError("train.steps must be positive.")
@@ -288,6 +362,7 @@ def _validate_a2c_config(config: A2CConfig) -> None:
 
 def _validate_a3c_config(config: A3CConfig) -> None:
     _validate_common_config(config)
+    _validate_model_config(config.model)
 
     if config.train.steps <= 0:
         raise ValueError("train.steps must be positive.")
@@ -307,3 +382,51 @@ def _validate_a3c_config(config: A3CConfig) -> None:
         raise ValueError("train.rmsprop_alpha must be in [0, 1).")
     if config.train.rmsprop_eps <= 0.0:
         raise ValueError("train.rmsprop_eps must be positive.")
+
+
+def _validate_ppo_config(config: PPOConfig) -> None:
+    _validate_common_config(config)
+    _validate_ppo_model_config(config.model)
+
+    if config.env.kind not in {"vector", "atari"}:
+        raise ValueError("env.kind must be one of: vector, atari.")
+    if config.env.num_envs <= 0:
+        raise ValueError("env.num_envs must be positive.")
+    if config.env.stack_num <= 0:
+        raise ValueError("env.stack_num must be positive.")
+    if config.env.frame_skip <= 0:
+        raise ValueError("env.frame_skip must be positive.")
+    if config.env.noop_max < 0:
+        raise ValueError("env.noop_max must be non-negative.")
+    if config.env.img_height <= 0:
+        raise ValueError("env.img_height must be positive.")
+    if config.env.img_width <= 0:
+        raise ValueError("env.img_width must be positive.")
+
+    if config.train.steps <= 0:
+        raise ValueError("train.steps must be positive.")
+    if config.train.learning_rate <= 0.0:
+        raise ValueError("train.learning_rate must be positive.")
+    if not 0.0 <= config.train.discount_factor <= 1.0:
+        raise ValueError("train.discount_factor must be in [0, 1].")
+    if not 0.0 <= config.train.gae_lambda <= 1.0:
+        raise ValueError("train.gae_lambda must be in [0, 1].")
+    if config.train.rollout_steps <= 0:
+        raise ValueError("train.rollout_steps must be positive.")
+    if config.train.minibatch_size <= 0:
+        raise ValueError("train.minibatch_size must be positive.")
+    rollout_batch_size = config.env.num_envs * config.train.rollout_steps
+    if config.train.minibatch_size > rollout_batch_size:
+        raise ValueError(
+            "train.minibatch_size must be at most env.num_envs * train.rollout_steps."
+        )
+    if config.train.epochs <= 0:
+        raise ValueError("train.epochs must be positive.")
+    if config.train.clip_coef <= 0.0:
+        raise ValueError("train.clip_coef must be positive.")
+    if config.train.value_coef < 0.0:
+        raise ValueError("train.value_coef must be non-negative.")
+    if config.train.entropy_coef < 0.0:
+        raise ValueError("train.entropy_coef must be non-negative.")
+    if config.train.max_grad_norm is not None and config.train.max_grad_norm <= 0.0:
+        raise ValueError("train.max_grad_norm must be positive or null.")
