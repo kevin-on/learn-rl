@@ -10,7 +10,7 @@ env:
   num_envs: 8
 
 model:
-  name: mlp
+  name: continuous_mlp
   kwargs:
     hidden_sizes: [64, 64]
     init_log_std: 0.0

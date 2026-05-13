@@ -6,7 +6,7 @@ import torch
 from einops import rearrange
 from torch import nn
 
-from envs import ActionSpec, DiscreteActionSpec
+from envs import ActionSpec, BoxActionSpec, DiscreteActionSpec
 from policies import CategoricalPolicyDistribution, DiagGaussianPolicyDistribution
 
 
@@ -76,92 +76,7 @@ class QNetwork(nn.Module):
         return self.q_head(self.trunk(observations))
 
 
-class SharedActorCriticMLP(nn.Module):
-    def __init__(
-        self,
-        observation_shape: tuple[int, ...],
-        num_actions: int,
-        hidden_sizes: list[int],
-    ) -> None:
-        super().__init__()
-        observation_size = math.prod(observation_shape)
-        if observation_size <= 0:
-            raise ValueError("observation_size must be positive.")
-        if num_actions <= 0:
-            raise ValueError("num_actions must be positive.")
-
-        self.trunk, trunk_output_size = build_mlp_layers(
-            input_size=observation_size,
-            hidden_sizes=hidden_sizes,
-        )
-        self.policy_head = nn.Linear(trunk_output_size, num_actions)
-        self.value_head = nn.Linear(trunk_output_size, 1)
-
-    def forward(
-        self, observations: torch.Tensor
-    ) -> tuple[CategoricalPolicyDistribution, torch.Tensor]:
-        observations = observations.to(dtype=torch.float32)
-        observations = rearrange(observations, "batch ... -> batch (...)")
-        features = self.trunk(observations)
-        policy_logits = self.policy_head(features)
-        state_values = self.value_head(features).squeeze(-1)
-        return CategoricalPolicyDistribution(policy_logits), state_values
-
-
-class ContinuousActorCriticMLP(nn.Module):
-    def __init__(
-        self,
-        observation_shape: tuple[int, ...],
-        action_shape: tuple[int, ...],
-        hidden_sizes: list[int],
-        init_log_std: float,
-        log_std_min: float,
-        log_std_max: float,
-    ) -> None:
-        super().__init__()
-        observation_size = math.prod(observation_shape)
-        action_size = math.prod(action_shape)
-        if observation_size <= 0:
-            raise ValueError("observation_size must be positive.")
-        if action_size <= 0:
-            raise ValueError("action_size must be positive.")
-
-        self.action_shape = action_shape
-        self.log_std_min = log_std_min
-        self.log_std_max = log_std_max
-        self.trunk, trunk_output_size = build_mlp_layers(
-            input_size=observation_size,
-            hidden_sizes=hidden_sizes,
-            activation="tanh",
-        )
-        self.mean_head = nn.Linear(trunk_output_size, action_size)
-        self.log_std = nn.Parameter(torch.full((action_size,), float(init_log_std)))
-        self.value_head = nn.Linear(trunk_output_size, 1)
-
-    def forward(
-        self, observations: torch.Tensor
-    ) -> tuple[DiagGaussianPolicyDistribution, torch.Tensor]:
-        observations = observations.to(dtype=torch.float32)
-        observations = rearrange(observations, "batch ... -> batch (...)")
-        features = self.trunk(observations)
-        mean = self.mean_head(features).reshape(
-            observations.shape[0],
-            *self.action_shape,
-        )
-        log_std = self.log_std.reshape(self.action_shape).expand_as(mean)
-        state_values = self.value_head(features).squeeze(-1)
-        return (
-            DiagGaussianPolicyDistribution(
-                mean=mean,
-                log_std=log_std,
-                log_std_min=self.log_std_min,
-                log_std_max=self.log_std_max,
-            ),
-            state_values,
-        )
-
-
-class UnsharedActorCriticMLP(nn.Module):
+class DiscreteActorCriticMLP(nn.Module):
     def __init__(
         self,
         observation_shape: tuple[int, ...],
@@ -196,6 +111,65 @@ class UnsharedActorCriticMLP(nn.Module):
         policy_logits = self.policy_head(policy_features)
         state_values = self.value_head(value_features).squeeze(-1)
         return CategoricalPolicyDistribution(policy_logits), state_values
+
+
+class ContinuousActorCriticMLP(nn.Module):
+    def __init__(
+        self,
+        observation_shape: tuple[int, ...],
+        action_shape: tuple[int, ...],
+        hidden_sizes: list[int],
+        init_log_std: float = 0.0,
+        log_std_min: float = -20.0,
+        log_std_max: float = 2.0,
+    ) -> None:
+        super().__init__()
+        observation_size = math.prod(observation_shape)
+        action_size = math.prod(action_shape)
+        if observation_size <= 0:
+            raise ValueError("observation_size must be positive.")
+        if action_size <= 0:
+            raise ValueError("action_size must be positive.")
+
+        self.action_shape = action_shape
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
+        self.policy_trunk, policy_output_size = build_mlp_layers(
+            input_size=observation_size,
+            hidden_sizes=hidden_sizes,
+            activation="tanh",
+        )
+        self.value_trunk, value_output_size = build_mlp_layers(
+            input_size=observation_size,
+            hidden_sizes=hidden_sizes,
+            activation="tanh",
+        )
+        self.mean_head = nn.Linear(policy_output_size, action_size)
+        self.log_std = nn.Parameter(torch.full((action_size,), float(init_log_std)))
+        self.value_head = nn.Linear(value_output_size, 1)
+
+    def forward(
+        self, observations: torch.Tensor
+    ) -> tuple[DiagGaussianPolicyDistribution, torch.Tensor]:
+        observations = observations.to(dtype=torch.float32)
+        observations = rearrange(observations, "batch ... -> batch (...)")
+        policy_features = self.policy_trunk(observations)
+        value_features = self.value_trunk(observations)
+        mean = self.mean_head(policy_features).reshape(
+            observations.shape[0],
+            *self.action_shape,
+        )
+        log_std = self.log_std.reshape(self.action_shape).expand_as(mean)
+        state_values = self.value_head(value_features).squeeze(-1)
+        return (
+            DiagGaussianPolicyDistribution(
+                mean=mean,
+                log_std=log_std,
+                log_std_min=self.log_std_min,
+                log_std_max=self.log_std_max,
+            ),
+            state_values,
+        )
 
 
 class ActorCriticCNN(nn.Module):
@@ -249,11 +223,14 @@ Q_MODEL_FACTORIES: dict[str, ModelFactory] = {
 }
 
 
-ACTOR_CRITIC_FACTORIES: dict[str, ModelFactory] = {
-    "mlp": SharedActorCriticMLP,
-    "shared_mlp": SharedActorCriticMLP,
-    "unshared_mlp": UnsharedActorCriticMLP,
+DISCRETE_ACTOR_CRITIC_FACTORIES: dict[str, ModelFactory] = {
+    "discrete_mlp": DiscreteActorCriticMLP,
     "atari_cnn": ActorCriticCNN,
+}
+
+
+BOX_ACTOR_CRITIC_FACTORIES: dict[str, ModelFactory] = {
+    "continuous_mlp": ContinuousActorCriticMLP,
 }
 
 
@@ -288,27 +265,39 @@ def build_actor_critic_model(
     action_spec: ActionSpec,
     kwargs: Mapping[str, Any],
 ) -> nn.Module:
-    factory = ACTOR_CRITIC_FACTORIES.get(name)
-    if factory is None:
-        known_models = ", ".join(sorted(ACTOR_CRITIC_FACTORIES))
-        msg = f"Unknown actor-critic model {name!r}; expected one of: {known_models}."
-        raise ValueError(msg)
-
     try:
         if isinstance(action_spec, DiscreteActionSpec):
+            factory = DISCRETE_ACTOR_CRITIC_FACTORIES.get(name)
+            if factory is None:
+                known_models = ", ".join(sorted(DISCRETE_ACTOR_CRITIC_FACTORIES))
+                msg = (
+                    f"Unknown discrete actor-critic model {name!r}; "
+                    f"expected one of: {known_models}."
+                )
+                raise ValueError(msg)
             return factory(
                 observation_shape=observation_shape,
                 num_actions=action_spec.num_actions,
                 **dict(kwargs),
             )
-        if name != "mlp":
-            msg = f"Actor-critic model {name!r} does not support Box action spaces."
-            raise ValueError(msg)
-        return ContinuousActorCriticMLP(
-            observation_shape=observation_shape,
-            action_shape=action_spec.shape,
-            **dict(kwargs),
-        )
+
+        if isinstance(action_spec, BoxActionSpec):
+            factory = BOX_ACTOR_CRITIC_FACTORIES.get(name)
+            if factory is None:
+                known_models = ", ".join(sorted(BOX_ACTOR_CRITIC_FACTORIES))
+                msg = (
+                    f"Unknown Box actor-critic model {name!r}; "
+                    f"expected one of: {known_models}."
+                )
+                raise ValueError(msg)
+            return factory(
+                observation_shape=observation_shape,
+                action_shape=action_spec.shape,
+                **dict(kwargs),
+            )
+
+        msg = f"Unsupported action spec: {type(action_spec).__name__}."
+        raise ValueError(msg)
     except TypeError as exc:
         msg = f"Invalid kwargs for actor-critic model {name!r}: {exc}"
         raise ValueError(msg) from exc

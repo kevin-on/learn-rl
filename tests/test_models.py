@@ -16,9 +16,9 @@ def test_q_network_output_shape() -> None:
     assert output.shape == (3, 2)
 
 
-def test_shared_actor_critic_mlp_output_shapes() -> None:
+def test_discrete_actor_critic_mlp_output_shapes() -> None:
     model = build_actor_critic_model(
-        name="shared_mlp",
+        name="discrete_mlp",
         observation_shape=(4,),
         action_spec=DiscreteActionSpec(num_actions=2),
         kwargs={"hidden_sizes": [8]},
@@ -29,11 +29,14 @@ def test_shared_actor_critic_mlp_output_shapes() -> None:
     assert dist.log_prob(torch.zeros(3, dtype=torch.int64)).shape == (3,)
     assert dist.entropy().shape == (3,)
     assert values.shape == (3,)
+    assert hasattr(model, "policy_trunk")
+    assert hasattr(model, "value_trunk")
+    assert not hasattr(model, "trunk")
 
 
 def test_continuous_actor_critic_mlp_output_shapes() -> None:
     model = build_actor_critic_model(
-        name="mlp",
+        name="continuous_mlp",
         observation_shape=(3,),
         action_spec=BoxActionSpec(
             shape=(2,),
@@ -56,28 +59,23 @@ def test_continuous_actor_critic_mlp_output_shapes() -> None:
     assert dist.log_prob(actions).shape == (3,)
     assert dist.entropy().shape == (3,)
     assert values.shape == (3,)
+    assert hasattr(model, "policy_trunk")
+    assert hasattr(model, "value_trunk")
+    assert not hasattr(model, "trunk")
 
 
-def test_unshared_actor_critic_mlp_output_shapes() -> None:
+def test_atari_cnn_remains_shared() -> None:
     model = build_actor_critic_model(
-        name="unshared_mlp",
-        observation_shape=(4,),
+        name="atari_cnn",
+        observation_shape=(4, 84, 84),
         action_spec=DiscreteActionSpec(num_actions=2),
-        kwargs={"hidden_sizes": [8]},
+        kwargs={"hidden_size": 8},
     )
-    dist, values = model(torch.zeros(3, 4))
+    dist, values = model(torch.zeros(3, 4, 84, 84))
     assert isinstance(dist, CategoricalPolicyDistribution)
     assert dist.sample().shape == (3,)
     assert dist.log_prob(torch.zeros(3, dtype=torch.int64)).shape == (3,)
     assert dist.entropy().shape == (3,)
     assert values.shape == (3,)
-
-
-def test_actor_critic_mlp_alias_remains_shared() -> None:
-    model = build_actor_critic_model(
-        name="mlp",
-        observation_shape=(4,),
-        action_spec=DiscreteActionSpec(num_actions=2),
-        kwargs={"hidden_sizes": [8]},
-    )
-    assert hasattr(model, "trunk")
+    assert hasattr(model, "convs")
+    assert hasattr(model, "fc")

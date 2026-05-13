@@ -9,7 +9,7 @@ env:
   num_envs: 8
 
 model:
-  name: unshared_mlp
+  name: discrete_mlp
   kwargs:
     hidden_sizes: [128, 128]
 

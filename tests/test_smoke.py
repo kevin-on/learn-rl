@@ -34,7 +34,7 @@ def test_a2c_cartpole_tiny_smoke() -> None:
     env = EnvPoolVecEnv(env_id="CartPole-v1", num_envs=2, seed=2)
     try:
         model = build_actor_critic_model(
-            name="mlp",
+            name="discrete_mlp",
             observation_shape=env.observation_shape,
             action_spec=env.action_spec,
             kwargs={"hidden_sizes": [8]},
@@ -57,7 +57,7 @@ def test_ppo_cartpole_tiny_smoke() -> None:
     env = EnvPoolVecEnv(env_id="CartPole-v1", num_envs=2, seed=3)
     try:
         model = build_actor_critic_model(
-            name="mlp",
+            name="discrete_mlp",
             observation_shape=env.observation_shape,
             action_spec=env.action_spec,
             kwargs={"hidden_sizes": [8]},
@@ -85,7 +85,7 @@ def test_a2c_pendulum_tiny_smoke() -> None:
     env = EnvPoolVecEnv(env_id="Pendulum-v1", num_envs=2, seed=4)
     try:
         model = build_actor_critic_model(
-            name="mlp",
+            name="continuous_mlp",
             observation_shape=env.observation_shape,
             action_spec=env.action_spec,
             kwargs={
@@ -113,7 +113,7 @@ def test_ppo_pendulum_tiny_smoke() -> None:
     env = EnvPoolVecEnv(env_id="Pendulum-v1", num_envs=2, seed=5)
     try:
         model = build_actor_critic_model(
-            name="mlp",
+            name="continuous_mlp",
             observation_shape=env.observation_shape,
             action_spec=env.action_spec,
             kwargs={
