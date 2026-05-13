@@ -6,14 +6,17 @@ seed: 456
 
 env:
   id: MountainCar-v0
+  num_envs: 8
 
 model:
-  hidden_sizes: [256]
+  name: mlp
+  kwargs:
+    hidden_sizes: [256]
 
 train:
   steps: 500000
-  policy_learning_rate: 0.0003
-  value_learning_rate: 0.0001
+  learning_rate: 0.0003
+  value_loss_coef: 0.5
   discount_factor: 0.999
   rollout_steps: 100
   max_grad_norm: null

@@ -8,12 +8,15 @@ env:
   id: CartPole-v1
 
 model:
-  hidden_sizes: [128, 128]
+  name: mlp
+  kwargs:
+    hidden_sizes: [128, 128]
 
 train:
   steps: 140000
   num_workers: 16
   learning_rate: 0.001
+  value_loss_coef: 0.5
   discount_factor: 0.99
   rollout_steps: 20
   max_grad_norm: 0.5

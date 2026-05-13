@@ -14,6 +14,7 @@ class ExperimentConfig:
 @dataclass(frozen=True)
 class EnvConfig:
     id: str
+    num_envs: int = 1
 
 
 @dataclass(frozen=True)
@@ -33,12 +34,7 @@ class PPOEnvConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
-    hidden_sizes: list[int] = field(default_factory=lambda: [128, 128])
-
-
-@dataclass(frozen=True)
-class PPOModelConfig:
-    name: str
+    name: str = "mlp"
     kwargs: dict[str, Any] = field(default_factory=dict)
 
 
@@ -57,8 +53,8 @@ class DQNTrainConfig:
 @dataclass(frozen=True)
 class A2CTrainConfig:
     steps: int = 25_000
-    policy_learning_rate: float = 1e-3
-    value_learning_rate: float = 1e-3
+    learning_rate: float = 1e-3
+    value_loss_coef: float = 0.5
     discount_factor: float = 0.99
     rollout_steps: int = 5
     max_grad_norm: float | None = 10.0
@@ -69,6 +65,7 @@ class A3CTrainConfig:
     steps: int = 25_000
     num_workers: int = 4
     learning_rate: float = 1e-3
+    value_loss_coef: float = 0.5
     discount_factor: float = 0.99
     rollout_steps: int = 5
     max_grad_norm: float | None = 10.0
@@ -152,7 +149,7 @@ class PPOConfig:
     experiment: ExperimentConfig
     env: PPOEnvConfig
     seed: int = 123
-    model: PPOModelConfig = field(default_factory=lambda: PPOModelConfig(name="mlp"))
+    model: ModelConfig = field(default_factory=ModelConfig)
     train: PPOTrainConfig = field(default_factory=PPOTrainConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -293,6 +290,9 @@ def _validate_common_config(config: ExperimentRunConfig) -> None:
     if config.seed < 0:
         raise ValueError("seed must be non-negative.")
 
+    if hasattr(config.env, "num_envs") and config.env.num_envs <= 0:
+        raise ValueError("env.num_envs must be positive.")
+
     if config.eval.every_steps <= 0:
         raise ValueError("eval.every_steps must be positive.")
     if config.eval.episodes <= 0:
@@ -305,13 +305,6 @@ def _validate_common_config(config: ExperimentRunConfig) -> None:
 
 
 def _validate_model_config(config: ModelConfig) -> None:
-    if not config.hidden_sizes:
-        raise ValueError("model.hidden_sizes must not be empty.")
-    if any(hidden_size <= 0 for hidden_size in config.hidden_sizes):
-        raise ValueError("model.hidden_sizes values must be positive.")
-
-
-def _validate_ppo_model_config(config: PPOModelConfig) -> None:
     if not isinstance(config.name, str) or not config.name:
         raise ValueError("model.name must be a non-empty string.")
     if not isinstance(config.kwargs, dict):
@@ -348,10 +341,10 @@ def _validate_a2c_config(config: A2CConfig) -> None:
 
     if config.train.steps <= 0:
         raise ValueError("train.steps must be positive.")
-    if config.train.policy_learning_rate <= 0.0:
-        raise ValueError("train.policy_learning_rate must be positive.")
-    if config.train.value_learning_rate <= 0.0:
-        raise ValueError("train.value_learning_rate must be positive.")
+    if config.train.learning_rate <= 0.0:
+        raise ValueError("train.learning_rate must be positive.")
+    if config.train.value_loss_coef < 0.0:
+        raise ValueError("train.value_loss_coef must be non-negative.")
     if not 0.0 <= config.train.discount_factor <= 1.0:
         raise ValueError("train.discount_factor must be in [0, 1].")
     if config.train.rollout_steps <= 0:
@@ -370,6 +363,8 @@ def _validate_a3c_config(config: A3CConfig) -> None:
         raise ValueError("train.num_workers must be positive.")
     if config.train.learning_rate <= 0.0:
         raise ValueError("train.learning_rate must be positive.")
+    if config.train.value_loss_coef < 0.0:
+        raise ValueError("train.value_loss_coef must be non-negative.")
     if not 0.0 <= config.train.discount_factor <= 1.0:
         raise ValueError("train.discount_factor must be in [0, 1].")
     if config.train.rollout_steps <= 0:
@@ -386,7 +381,7 @@ def _validate_a3c_config(config: A3CConfig) -> None:
 
 def _validate_ppo_config(config: PPOConfig) -> None:
     _validate_common_config(config)
-    _validate_ppo_model_config(config.model)
+    _validate_model_config(config.model)
 
     if config.env.kind not in {"vector", "atari"}:
         raise ValueError("env.kind must be one of: vector, atari.")

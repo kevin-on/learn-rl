@@ -38,8 +38,7 @@ def plot_metrics(
 
     _plot_returns(axes[0], records)
     _plot_loss(axes[1], records)
-    # TODO: Move algorithm-specific metric choices into train scripts.
-    _plot_epsilon(axes[2], records)
+    _plot_auxiliary_metric(axes[2], records)
 
     axes[2].set_xlabel("environment step")
     fig.tight_layout()
@@ -118,7 +117,7 @@ def _plot_loss(ax: Any, records: list[dict[str, Any]]) -> None:
     _finish_axis(ax, ylabel="loss")
 
 
-def _plot_epsilon(ax: Any, records: list[dict[str, Any]]) -> None:
+def _plot_auxiliary_metric(ax: Any, records: list[dict[str, Any]]) -> None:
     epsilon_steps, epsilons = _series(records, "epsilon")
     if epsilon_steps:
         ax.plot(
@@ -162,7 +161,7 @@ def _finish_axis(ax: Any, ylabel: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot DQN metrics from a JSONL file.")
+    parser = argparse.ArgumentParser(description="Plot RL metrics from a JSONL file.")
     parser.add_argument("metrics_path", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()

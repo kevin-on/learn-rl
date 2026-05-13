@@ -1,117 +1,22 @@
 import argparse
-import random
 from collections import deque
 from dataclasses import replace
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-import torch
 
 from config import PPOConfig, load_ppo_config, save_config
+from experiment import (
+    choose_device,
+    create_run_dir,
+    evaluate_actor_critic_policy,
+    make_envpool_env,
+    set_random_seeds,
+)
 from metrics import JSONLMetricsLogger
+from models import build_actor_critic_model
 from plot_metrics import plot_metrics
 from ppo import PPO, PPOLog
-from ppo_env import EnvPoolPPOVecEnv, PPOVecEnv
-from ppo_models import build_ppo_model
-
-
-def choose_device(requested_device: str) -> torch.device:
-    if requested_device == "auto":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        return torch.device("cpu")
-
-    if requested_device == "cpu":
-        return torch.device("cpu")
-
-    if requested_device == "cuda":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        raise RuntimeError("--device cuda was requested, but CUDA is not available.")
-
-    msg = f"device must be one of: auto, cpu, cuda; got {requested_device}"
-    raise ValueError(msg)
-
-
-def set_random_seeds(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-def envpool_kwargs(
-    config: PPOConfig, *, evaluation: bool = False
-) -> dict[str, int | bool]:
-    kwargs: dict[str, int | bool] = {}
-    if config.env.kind == "atari":
-        kwargs.update(
-            stack_num=config.env.stack_num,
-            frame_skip=config.env.frame_skip,
-            noop_max=config.env.noop_max,
-            episodic_life=config.env.episodic_life,
-            reward_clip=config.env.reward_clip,
-            img_height=config.env.img_height,
-            img_width=config.env.img_width,
-            gray_scale=config.env.gray_scale,
-        )
-        if evaluation:
-            kwargs["episodic_life"] = False
-            kwargs["reward_clip"] = False
-
-    return kwargs
-
-
-def build_model(
-    *,
-    config: PPOConfig,
-    observation_shape: tuple[int, ...],
-    num_actions: int,
-) -> torch.nn.Module:
-    return build_ppo_model(
-        name=config.model.name,
-        observation_shape=observation_shape,
-        num_actions=num_actions,
-        kwargs=config.model.kwargs,
-    )
-
-
-@torch.no_grad()
-def evaluate_policy(
-    *,
-    model: torch.nn.Module,
-    env: PPOVecEnv,
-    num_episodes: int,
-) -> list[float]:
-    was_training = model.training
-    model.eval()
-    device = next(model.parameters()).device
-    episode_returns: list[float] = []
-    assert env.num_envs == 1
-
-    for _episode_index in range(num_episodes):
-        observation = env.reset()
-        done = False
-        episode_return = 0.0
-        while not done:
-            observation_tensor = torch.as_tensor(observation, device=device)
-            logits, _value = model(observation_tensor)
-            assert logits.shape == (1, env.num_actions)
-
-            action_index = int(logits.argmax(dim=1).item())
-            step = env.step(np.asarray([action_index], dtype=np.int32))
-            observation = step.observation
-            episode_return += float(step.reward[0])
-            done = bool(step.terminated[0] or step.truncated[0])
-
-        episode_returns.append(episode_return)
-
-    if was_training:
-        model.train()
-
-    return episode_returns
 
 
 def parse_args() -> argparse.Namespace:
@@ -158,18 +63,6 @@ def resolve_config(args: argparse.Namespace) -> PPOConfig:
     return config
 
 
-def create_run_dir(config: PPOConfig, requested_run_dir: Path | None) -> Path:
-    if requested_run_dir is not None:
-        run_dir = requested_run_dir
-    else:
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        run_name = f"{timestamp}-{config.experiment.name}-seed{config.seed}"
-        run_dir = Path(config.experiment.run_root) / run_name
-
-    run_dir.mkdir(parents=True, exist_ok=requested_run_dir is not None)
-    return run_dir
-
-
 def main() -> None:
     args = parse_args()
     config = resolve_config(args)
@@ -179,23 +72,23 @@ def main() -> None:
     metrics_path = run_dir / "metrics.jsonl"
     save_config(config, run_dir / "config.yaml")
 
-    train_env = EnvPoolPPOVecEnv(
-        env_id=config.env.id,
+    train_env = make_envpool_env(
+        config,
         num_envs=config.env.num_envs,
         seed=config.seed,
-        env_kwargs=envpool_kwargs(config),
     )
-    model = build_model(
-        config=config,
+    model = build_actor_critic_model(
+        name=config.model.name,
         observation_shape=train_env.observation_shape,
         num_actions=train_env.num_actions,
+        kwargs=config.model.kwargs,
     ).to(device)
 
-    eval_env = EnvPoolPPOVecEnv(
-        env_id=config.env.id,
+    eval_env = make_envpool_env(
+        config,
         num_envs=1,
         seed=config.eval.seed,
-        env_kwargs=envpool_kwargs(config, evaluation=True),
+        evaluation=True,
     )
 
     agent = PPO(
@@ -273,7 +166,7 @@ def main() -> None:
             while next_eval_step <= log.step:
                 next_eval_step += config.eval.every_steps
 
-            returns = evaluate_policy(
+            returns = evaluate_actor_critic_policy(
                 model=model,
                 env=eval_env,
                 num_episodes=config.eval.episodes,

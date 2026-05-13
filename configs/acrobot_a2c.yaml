@@ -6,14 +6,17 @@ seed: 123
 
 env:
   id: Acrobot-v1
+  num_envs: 8
 
 model:
-  hidden_sizes: [64, 64]
+  name: mlp
+  kwargs:
+    hidden_sizes: [64, 64]
 
 train:
   steps: 80000
-  policy_learning_rate: 0.0007
-  value_learning_rate: 0.0007
+  learning_rate: 0.0007
+  value_loss_coef: 0.5
   discount_factor: 0.995
   rollout_steps: 10
   max_grad_norm: 0.5

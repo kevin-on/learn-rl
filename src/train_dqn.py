@@ -1,112 +1,28 @@
 import argparse
-import random
 from collections import deque
 from dataclasses import replace
-from datetime import datetime
 from pathlib import Path
 
-import gymnasium as gym
 import numpy as np
-import torch
-from torch import nn
 
 from config import DQNConfig, load_config, save_config
 from dqn import DQN, DQNLog
+from experiment import (
+    choose_device,
+    create_run_dir,
+    evaluate_q_policy,
+    make_envpool_env,
+    set_random_seeds,
+)
 from metrics import JSONLMetricsLogger
+from models import build_q_model
 from plot_metrics import plot_metrics
 from schedules import ExplorationRateSchedule
-from task_adapter import VectorTaskAdapter, make_task_adapter
-
-
-def build_q_net(
-    state_size: int, num_actions: int, hidden_sizes: list[int]
-) -> nn.Module:
-    layers: list[nn.Module] = []
-    input_size = state_size
-    for hidden_size in hidden_sizes:
-        layers.extend([nn.Linear(input_size, hidden_size), nn.ReLU()])
-        input_size = hidden_size
-    layers.append(nn.Linear(input_size, num_actions))
-    return nn.Sequential(*layers)
-
-
-def choose_device(requested_device: str) -> torch.device:
-    if requested_device == "auto":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-
-        if torch.backends.mps.is_available():
-            return torch.device("mps")
-
-        return torch.device("cpu")
-
-    if requested_device == "cpu":
-        return torch.device("cpu")
-
-    if requested_device == "cuda":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        raise RuntimeError("--device cuda was requested, but CUDA is not available.")
-
-    if requested_device == "mps":
-        if torch.backends.mps.is_available():
-            return torch.device("mps")
-        raise RuntimeError("--device mps was requested, but MPS is not available.")
-
-    msg = f"device must be one of: auto, cpu, cuda, mps; got {requested_device}"
-    raise ValueError(msg)
-
-
-def set_random_seeds(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-
-@torch.no_grad()
-def evaluate_policy(
-    q_net: nn.Module,
-    task_adapter: VectorTaskAdapter,
-    num_episodes: int,
-    seed: int,
-) -> list[float]:
-    was_training = q_net.training
-    q_net.eval()
-    device = next(q_net.parameters()).device
-    episode_returns: list[float] = []
-
-    for episode_index in range(num_episodes):
-        observation, _info = task_adapter.env.reset(seed=seed + episode_index)
-        state = task_adapter.encode_observation(observation)
-        done = False
-        episode_return = 0.0
-
-        while not done:
-            state_tensor = torch.as_tensor(
-                state, dtype=torch.float32, device=device
-            ).unsqueeze(0)
-            q_values = q_net(state_tensor)
-            action_index = int(q_values.argmax(dim=1).item())
-            env_action = task_adapter.action_index_to_env_action(action_index)
-
-            observation, reward, terminated, truncated, _info = task_adapter.env.step(
-                env_action
-            )
-            state = task_adapter.encode_observation(observation)
-            episode_return += float(reward)
-            done = terminated or truncated
-
-        episode_returns.append(episode_return)
-
-    if was_training:
-        q_net.train()
-
-    return episode_returns
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train DQN on a supported Gymnasium discrete-action task."
+        description="Train DQN on an EnvPool discrete-action task."
     )
     parser.add_argument(
         "--config",
@@ -121,9 +37,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--device",
-        choices=["auto", "cpu", "cuda", "mps"],
+        choices=["auto", "cpu", "cuda"],
         default="auto",
-        help="PyTorch device to use. 'auto' prefers CUDA, then MPS, then CPU.",
+        help="PyTorch device to use. 'auto' prefers CUDA, then CPU.",
     )
     parser.add_argument(
         "--set",
@@ -148,18 +64,6 @@ def resolve_config(args: argparse.Namespace) -> DQNConfig:
     return config
 
 
-def create_run_dir(config: DQNConfig, requested_run_dir: Path | None) -> Path:
-    if requested_run_dir is not None:
-        run_dir = requested_run_dir
-    else:
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        run_name = f"{timestamp}-{config.experiment.name}-seed{config.seed}"
-        run_dir = Path(config.experiment.run_root) / run_name
-
-    run_dir.mkdir(parents=True, exist_ok=requested_run_dir is not None)
-    return run_dir
-
-
 def main() -> None:
     args = parse_args()
     config = resolve_config(args)
@@ -169,13 +73,17 @@ def main() -> None:
     metrics_path = run_dir / "metrics.jsonl"
     save_config(config, run_dir / "config.yaml")
 
-    train_env = gym.wrappers.RecordEpisodeStatistics(gym.make(config.env.id))
-    train_env.action_space.seed(config.seed)
-    train_adapter = make_task_adapter(train_env, config.env.id)
-
-    eval_env = gym.make(config.env.id)
-    eval_env.action_space.seed(config.eval.seed)
-    eval_adapter = make_task_adapter(eval_env, config.env.id)
+    train_env = make_envpool_env(
+        config,
+        num_envs=config.env.num_envs,
+        seed=config.seed,
+    )
+    eval_env = make_envpool_env(
+        config,
+        num_envs=1,
+        seed=config.eval.seed,
+        evaluation=True,
+    )
 
     exploration_schedule = ExplorationRateSchedule(
         schedule=config.exploration.schedule,
@@ -183,13 +91,14 @@ def main() -> None:
         end=config.exploration.end,
         decay_steps=config.exploration.decay_steps,
     )
-    q_net = build_q_net(
-        train_adapter.state_size,
-        train_adapter.num_actions,
-        config.model.hidden_sizes,
+    q_net = build_q_model(
+        name=config.model.name,
+        observation_shape=train_env.observation_shape,
+        num_actions=train_env.num_actions,
+        kwargs=config.model.kwargs,
     ).to(device)
     agent = DQN(
-        train_adapter,
+        train_env,
         q_net,
         learning_rate=config.train.learning_rate,
         discount_factor=config.train.discount_factor,
@@ -201,78 +110,80 @@ def main() -> None:
     )
 
     recent_returns: deque[float] = deque(maxlen=20)
+    next_loss_step = config.logging.loss_every_steps
+    next_eval_step = config.eval.every_steps
 
     def log_training(agent: DQN, log: DQNLog) -> None:
-        step = log.step_index + 1
-        record = {
-            "step": step,
-            "loss": log.loss,
-            "grad_norm": log.grad_norm,
-            "epsilon": log.exploration_rate,
-        }
+        nonlocal next_loss_step, next_eval_step
 
-        if log.loss is not None and step % config.logging.loss_every_steps == 0:
+        metrics.write(
+            step=log.step,
+            loss=log.loss,
+            grad_norm=log.grad_norm,
+            epsilon=log.exploration_rate,
+        )
+
+        if log.loss is not None and log.step >= next_loss_step:
+            while next_loss_step <= log.step:
+                next_loss_step += config.logging.loss_every_steps
             grad_norm_text = (
                 "" if log.grad_norm is None else f" grad_norm={log.grad_norm:.4f}"
             )
             print(
-                f"step={step:6d} loss={log.loss:.4f}{grad_norm_text} "
+                f"step={log.step:6d} loss={log.loss:.4f}{grad_norm_text} "
                 f"epsilon={log.exploration_rate:.3f}"
             )
 
-        if "episode" in log.info:
-            episode = log.info["episode"]
-            episode_return = float(episode["r"])
-            episode_length = int(episode["l"])
-            recent_returns.append(episode_return)
+        for episode in log.episodes:
+            recent_returns.append(episode.episode_return)
             mean_return = float(np.mean(recent_returns))
-            record.update(
-                train_episode_return=episode_return,
+            metrics.write(
+                step=log.step,
+                env_id=episode.env_id,
+                train_episode_return=episode.episode_return,
                 train_episode_return_mean20=mean_return,
-                train_episode_length=episode_length,
+                train_episode_length=episode.episode_length,
             )
             print(
-                f"step={step:6d} "
-                f"train_return={episode_return:6.1f} "
+                f"step={log.step:6d} "
+                f"env={episode.env_id:3d} "
+                f"train_return={episode.episode_return:6.1f} "
                 f"mean20_return={mean_return:6.1f} "
-                f"episode_length={episode_length:3d} "
+                f"episode_length={episode.episode_length:4d} "
                 f"epsilon={log.exploration_rate:.3f}"
             )
 
-        metrics.write(**record)
+        if log.step >= next_eval_step:
+            while next_eval_step <= log.step:
+                next_eval_step += config.eval.every_steps
 
-    def run_evaluation(agent: DQN, step_index: int, exploration_rate: float) -> None:
-        step = step_index + 1
-        if step % config.eval.every_steps != 0:
-            return
-
-        returns = evaluate_policy(
-            agent.online_q_net,
-            eval_adapter,
-            num_episodes=config.eval.episodes,
-            seed=config.eval.seed,
-        )
-        eval_mean_return = float(np.mean(returns))
-        eval_std_return = float(np.std(returns))
-        eval_best_return = float(np.max(returns))
-        metrics.write(
-            step=step,
-            epsilon=exploration_rate,
-            eval_seed=config.eval.seed,
-            eval_mean_return=eval_mean_return,
-            eval_std_return=eval_std_return,
-            eval_best_return=eval_best_return,
-        )
-        print(
-            f"step={step:6d} "
-            f"eval_mean_return={eval_mean_return:6.1f} "
-            f"eval_std_return={eval_std_return:6.1f} "
-            f"eval_best_return={eval_best_return:6.1f} "
-            f"epsilon={exploration_rate:.3f}"
-        )
+            returns = evaluate_q_policy(
+                q_net=agent.online_q_net,
+                env=eval_env,
+                num_episodes=config.eval.episodes,
+            )
+            eval_mean_return = float(np.mean(returns))
+            eval_std_return = float(np.std(returns))
+            eval_best_return = float(np.max(returns))
+            metrics.write(
+                step=log.step,
+                epsilon=log.exploration_rate,
+                eval_seed=config.eval.seed,
+                eval_mean_return=eval_mean_return,
+                eval_std_return=eval_std_return,
+                eval_best_return=eval_best_return,
+            )
+            print(
+                f"step={log.step:6d} "
+                f"eval_mean_return={eval_mean_return:6.1f} "
+                f"eval_std_return={eval_std_return:6.1f} "
+                f"eval_best_return={eval_best_return:6.1f} "
+                f"epsilon={log.exploration_rate:.3f}"
+            )
 
     print(
-        f"Training {config.env.id} for {config.train.steps} steps on {device}. "
+        f"Training {config.env.id} for at least {config.train.steps} DQN env "
+        f"steps on {device} with {config.env.num_envs} EnvPool envs. "
         f"Run directory: {run_dir}"
     )
     with JSONLMetricsLogger(metrics_path) as metrics:
@@ -280,9 +191,7 @@ def main() -> None:
             agent.train(
                 num_steps=config.train.steps,
                 exploration_rate_fn=exploration_schedule.value,
-                env_seed=config.seed,
                 log_fn=log_training,
-                eval_fn=run_evaluation,
             )
         finally:
             train_env.close()

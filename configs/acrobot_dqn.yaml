@@ -6,9 +6,12 @@ seed: 123
 
 env:
   id: Acrobot-v1
+  num_envs: 1
 
 model:
-  hidden_sizes: [256, 256]
+  name: mlp
+  kwargs:
+    hidden_sizes: [256, 256]
 
 train:
   steps: 100000

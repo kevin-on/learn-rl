@@ -1,25 +1,34 @@
 # learn-rl
 
-Small DQN experiments for Gymnasium tasks.
+Small reinforcement-learning experiments for Gymnasium-compatible EnvPool tasks.
 
-## Train DQN
+Implemented algorithms:
+
+- DQN
+- A2C
+- A3C
+- PPO
+
+## Train
+
+Each algorithm has its own entrypoint:
 
 ```sh
-uv run python src/train_dqn.py --config configs/acrobot_dqn.yaml
+uv run python src/train_dqn.py --config configs/cartpole_dqn.yaml
+uv run python src/train_a2c.py --config configs/cartpole_a2c.yaml
+uv run python src/train_a3c.py --config configs/cartpole_a3c.yaml
+uv run python src/train_ppo.py --config configs/cartpole_ppo.yaml
 ```
 
-Discrete-action task configs are available under `configs/`:
-
-- `configs/acrobot_dqn.yaml`
-- `configs/cartpole_dqn.yaml`
-- `configs/lunar_lander_dqn.yaml`
-- `configs/mountain_car_dqn.yaml`
+DQN, A2C, and PPO train through a shared EnvPool vector-environment interface.
+A3C keeps its worker-process training loop, while sharing the common model and
+math utilities where practical.
 
 Each run writes:
 
 - `config.yaml`: the resolved config used for the run
-- `metrics.jsonl`: step-wise training, evaluation, and epsilon metrics
-- `metrics.png`: a plot of returns, TD loss, and epsilon
+- `metrics.jsonl`: training, evaluation, and algorithm-specific metrics
+- `metrics.png`: a plot of returns and optimization metrics
 
 By default outputs go under `runs/`, which is git-ignored.
 
@@ -28,24 +37,31 @@ By default outputs go under `runs/`, which is git-ignored.
 Use `--set` with dotted config keys:
 
 ```sh
-uv run python src/train_dqn.py --config configs/acrobot_dqn.yaml --set train.steps=1000 --set seed=456
+uv run python src/train_dqn.py --config configs/cartpole_dqn.yaml --set train.steps=1000 --set seed=456
 ```
 
-Gradient clipping is configured with `train.max_grad_norm`. Set it to `null` to
-disable clipping:
+Vectorized DQN/A2C/PPO runs can override `env.num_envs`:
 
 ```sh
-uv run python src/train_dqn.py --config configs/acrobot_dqn.yaml --set train.max_grad_norm=null
+uv run python src/train_a2c.py --config configs/cartpole_a2c.yaml --set env.num_envs=4
 ```
 
 For list values, quote the shell argument:
 
 ```sh
-uv run python src/train_dqn.py --config configs/acrobot_dqn.yaml --set 'model.hidden_sizes=[64, 64]'
+uv run python src/train_dqn.py --config configs/cartpole_dqn.yaml --set 'model.kwargs.hidden_sizes=[64, 64]'
 ```
 
 ## Replot Existing Metrics
 
 ```sh
 uv run python src/plot_metrics.py runs/<run-name>/metrics.jsonl
+```
+
+## Checks
+
+```sh
+uv run ruff check src tests
+uv run ruff format --check src tests
+uv run pytest
 ```

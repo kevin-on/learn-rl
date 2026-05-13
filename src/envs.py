@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 import envpool
@@ -17,15 +17,16 @@ type EnvInfo = Mapping[str, EnvInfoLeaf | Mapping[str, EnvInfoLeaf]]
 
 
 @dataclass(frozen=True)
-class PPOEnvStep:
+class VecEnvStep:
     observation: ObservationBatch
     reward: RewardBatch
     terminated: DoneBatch
     truncated: DoneBatch
     env_id: EnvIdBatch
+    info: EnvInfo = field(default_factory=dict)
 
 
-class PPOVecEnv(Protocol):
+class DiscreteVecEnv(Protocol):
     num_envs: int
     num_actions: int
     observation_shape: tuple[int, ...]
@@ -33,7 +34,7 @@ class PPOVecEnv(Protocol):
     def reset(self) -> ObservationBatch:
         raise NotImplementedError
 
-    def step(self, action_indices: ActionBatch) -> PPOEnvStep:
+    def step(self, action_indices: ActionBatch) -> VecEnvStep:
         raise NotImplementedError
 
     def reset_subset(self, env_ids: EnvIdBatch) -> ObservationBatch:
@@ -43,7 +44,7 @@ class PPOVecEnv(Protocol):
         raise NotImplementedError
 
 
-class EnvPoolPPOVecEnv(PPOVecEnv):
+class EnvPoolVecEnv(DiscreteVecEnv):
     def __init__(
         self,
         *,
@@ -54,6 +55,8 @@ class EnvPoolPPOVecEnv(PPOVecEnv):
     ) -> None:
         if num_envs <= 0:
             raise ValueError("num_envs must be positive.")
+        if seed < 0:
+            raise ValueError("seed must be non-negative.")
 
         kwargs: dict[str, int | bool] = {
             "num_envs": num_envs,
@@ -63,7 +66,9 @@ class EnvPoolPPOVecEnv(PPOVecEnv):
         kwargs.update(env_kwargs or {})
         self.env = envpool.make_gymnasium(env_id, **kwargs)
         if not isinstance(self.env.action_space, spaces.Discrete):
-            raise TypeError("PPO v1 requires a discrete action space.")
+            raise TypeError("EnvPoolVecEnv requires a discrete action space.")
+        if not isinstance(self.env.observation_space, spaces.Box):
+            raise TypeError("EnvPoolVecEnv requires a Box observation space.")
 
         self.num_envs = num_envs
         self.num_actions = int(self.env.action_space.n)
@@ -76,13 +81,17 @@ class EnvPoolPPOVecEnv(PPOVecEnv):
         observation, _info = self.env.reset()
         return _observation_batch(observation, batch_size=self.num_envs)
 
-    def step(self, action_indices: ActionBatch) -> PPOEnvStep:
+    def step(self, action_indices: ActionBatch) -> VecEnvStep:
         action_indices = np.asarray(action_indices, dtype=np.int32)
         assert action_indices.shape == (self.num_envs,)
+        if np.any(action_indices < 0) or np.any(action_indices >= self.num_actions):
+            msg = f"action indices must be in [0, {self.num_actions})."
+            raise ValueError(msg)
+
         env_action = action_indices + self._action_start
         observation, reward, terminated, truncated, info = self.env.step(env_action)
 
-        return PPOEnvStep(
+        return VecEnvStep(
             observation=_observation_batch(observation, batch_size=self.num_envs),
             reward=_vector_array(reward, dtype=np.float32, batch_size=self.num_envs),
             terminated=_vector_array(
@@ -92,6 +101,7 @@ class EnvPoolPPOVecEnv(PPOVecEnv):
                 truncated, dtype=np.bool_, batch_size=self.num_envs
             ),
             env_id=_env_ids_from_info(info=info, batch_size=self.num_envs),
+            info=info,
         )
 
     def reset_subset(self, env_ids: EnvIdBatch) -> ObservationBatch:

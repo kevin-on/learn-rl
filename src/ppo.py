@@ -6,9 +6,11 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from einops import rearrange
+from torch import nn
 
-from ppo_env import ObservationBatch, PPOVecEnv
-from ppo_models import ActorCriticModel
+from envs import DiscreteVecEnv, ObservationBatch
+from experiment import model_device
+from rl_math import clip_grad_norm, compute_gae
 
 
 @dataclass(frozen=True)
@@ -58,8 +60,8 @@ class _Rollout:
 class PPO:
     def __init__(
         self,
-        env: PPOVecEnv,
-        model: ActorCriticModel,
+        env: DiscreteVecEnv,
+        model: nn.Module,
         *,
         learning_rate: float,
         rollout_steps: int,
@@ -90,7 +92,7 @@ class PPO:
 
         self.env = env
         self.model = model
-        self.device = _model_device(model)
+        self.device = model_device(model)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         self.num_envs = env.num_envs
         self.num_actions = env.num_actions
@@ -149,7 +151,8 @@ class PPO:
         observation: ObservationBatch,
         rollout_steps: int,
     ) -> _Rollout:
-        assert rollout_steps > 0
+        if rollout_steps <= 0:
+            raise ValueError("rollout_steps must be positive.")
         observation_shape = self.env.observation_shape
         observations = torch.empty(
             (rollout_steps, self.num_envs, *observation_shape),
@@ -269,10 +272,7 @@ class PPO:
                     self._episode_lengths[env_slot] = 0
 
                 reset_observation = self.env.reset_subset(step.env_id[done_slots])
-                assert reset_observation.shape == (
-                    len(done_slots),
-                    *observation_shape,
-                )
+                assert reset_observation.shape == (len(done_slots), *observation_shape)
                 next_observation[done_slots] = reset_observation
 
             observation = next_observation
@@ -351,11 +351,6 @@ class PPO:
         )
         flat_returns = rearrange(returns, "rollout_step env -> (rollout_step env)")
 
-        if num_transitions > 1:
-            flat_advantages = (flat_advantages - flat_advantages.mean()) / (
-                flat_advantages.std(unbiased=False) + 1e-8
-            )
-
         total_loss = 0.0
         total_policy_loss = 0.0
         total_value_loss = 0.0
@@ -395,15 +390,9 @@ class PPO:
 
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
-                if self.max_grad_norm is not None:
-                    clipped_norm = torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), self.max_grad_norm
-                    )
-                    last_grad_norm = float(
-                        clipped_norm.item()
-                        if isinstance(clipped_norm, torch.Tensor)
-                        else clipped_norm
-                    )
+                last_grad_norm = clip_grad_norm(
+                    self.model.parameters(), self.max_grad_norm
+                )
                 self.optimizer.step()
 
                 with torch.no_grad():
@@ -431,45 +420,6 @@ class PPO:
             clip_fraction=total_clip_fraction / total_seen,
             grad_norm=last_grad_norm,
         )
-
-
-def compute_gae(
-    *,
-    rewards: torch.Tensor,
-    values: torch.Tensor,
-    next_values: torch.Tensor,
-    terminated: torch.Tensor,
-    truncated: torch.Tensor,
-    discount_factor: float,
-    gae_lambda: float,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    assert rewards.shape == values.shape
-    assert rewards.shape == next_values.shape
-    assert terminated.shape == rewards.shape
-    assert truncated.shape == rewards.shape
-    if not 0.0 <= discount_factor <= 1.0:
-        raise ValueError("discount_factor must be in [0, 1].")
-    if not 0.0 <= gae_lambda <= 1.0:
-        raise ValueError("gae_lambda must be in [0, 1].")
-
-    advantages = torch.empty_like(rewards)
-    last_advantage = torch.zeros(rewards.shape[1], device=rewards.device)
-    for step in reversed(range(rewards.shape[0])):
-        episode_done = torch.logical_or(terminated[step], truncated[step])
-        recurrence_mask = (~episode_done).to(dtype=torch.float32)
-        bootstrap_mask = (~terminated[step]).to(dtype=torch.float32)
-        delta = (
-            rewards[step]
-            + discount_factor * next_values[step] * bootstrap_mask
-            - values[step]
-        )
-        last_advantage = (
-            delta + discount_factor * gae_lambda * recurrence_mask * last_advantage
-        )
-        advantages[step] = last_advantage
-
-    returns = advantages + values
-    return advantages, returns
 
 
 def make_minibatch_indices(
@@ -534,11 +484,3 @@ def validate_ppo_hyperparameters(
         raise ValueError("entropy_coef must be non-negative.")
     if max_grad_norm is not None and max_grad_norm <= 0.0:
         raise ValueError("max_grad_norm must be positive or None.")
-
-
-def _model_device(model: ActorCriticModel) -> torch.device:
-    try:
-        parameter = next(model.parameters())
-    except StopIteration as exc:
-        raise ValueError("PPO model must have at least one parameter.") from exc
-    return parameter.device

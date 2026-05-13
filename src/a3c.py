@@ -1,4 +1,3 @@
-import math
 import queue
 import random
 from collections.abc import Callable
@@ -7,6 +6,7 @@ from multiprocessing.context import SpawnContext, SpawnProcess
 from multiprocessing.queues import Queue
 from multiprocessing.sharedctypes import Synchronized
 from multiprocessing.synchronize import Lock
+from typing import Any
 
 import gymnasium as gym
 import numpy as np
@@ -16,6 +16,8 @@ import torch.nn.functional as F
 from numpy.typing import NDArray
 from torch import nn
 
+from models import build_actor_critic_model
+from rl_math import clip_grad_tensors, compute_discounted_returns
 from task_adapter import State, VectorTaskAdapter, make_task_adapter
 
 
@@ -36,37 +38,6 @@ class A3CLog:
 type A3CLogFn = Callable[[A3CLog], None]
 
 
-class ActorCriticNet(nn.Module):
-    def __init__(
-        self,
-        state_size: int,
-        num_actions: int,
-        hidden_sizes: list[int],
-    ) -> None:
-        super().__init__()
-        validate_actor_critic_model_shape(
-            state_size=state_size,
-            num_actions=num_actions,
-            hidden_sizes=hidden_sizes,
-        )
-
-        layers: list[nn.Module] = []
-        layer_input_size = state_size
-        for hidden_size in hidden_sizes:
-            layers.extend([nn.Linear(layer_input_size, hidden_size), nn.ReLU()])
-            layer_input_size = hidden_size
-
-        self.trunk = nn.Sequential(*layers)
-        self.policy_head = nn.Linear(layer_input_size, num_actions)
-        self.value_head = nn.Linear(layer_input_size, 1)
-
-    def forward(self, states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        features = self.trunk(states)
-        logits = self.policy_head(features)
-        values = self.value_head(features).squeeze(-1)
-        return logits, values
-
-
 class A3C:
     def __init__(
         self,
@@ -74,9 +45,11 @@ class A3C:
         env_id: str,
         state_size: int,
         num_actions: int,
-        hidden_sizes: list[int],
+        model_name: str,
+        model_kwargs: dict[str, Any],
         num_workers: int,
         learning_rate: float,
+        value_loss_coef: float,
         discount_factor: float,
         rollout_steps: int,
         max_grad_norm: float | None,
@@ -87,9 +60,9 @@ class A3C:
         validate_a3c_hyperparameters(
             state_size=state_size,
             num_actions=num_actions,
-            hidden_sizes=hidden_sizes,
             num_workers=num_workers,
             learning_rate=learning_rate,
+            value_loss_coef=value_loss_coef,
             discount_factor=discount_factor,
             rollout_steps=rollout_steps,
             max_grad_norm=max_grad_norm,
@@ -101,9 +74,11 @@ class A3C:
         self.env_id = env_id
         self.state_size = state_size
         self.num_actions = num_actions
-        self.hidden_sizes = list(hidden_sizes)
+        self.model_name = model_name
+        self.model_kwargs = dict(model_kwargs)
         self.num_workers = num_workers
         self.learning_rate = learning_rate
+        self.value_loss_coef = value_loss_coef
         self.discount_factor = discount_factor
         self.rollout_steps = rollout_steps
         self.max_grad_norm = max_grad_norm
@@ -111,10 +86,11 @@ class A3C:
         self.rmsprop_alpha = rmsprop_alpha
         self.rmsprop_eps = rmsprop_eps
 
-        self.global_model = ActorCriticNet(
-            state_size=state_size,
+        self.global_model = build_actor_critic_model(
+            name=self.model_name,
+            observation_shape=(state_size,),
             num_actions=num_actions,
-            hidden_sizes=self.hidden_sizes,
+            kwargs=self.model_kwargs,
         ).cpu()
         self.global_model.share_memory()
 
@@ -152,7 +128,8 @@ class A3C:
                     "env_id": self.env_id,
                     "state_size": self.state_size,
                     "num_actions": self.num_actions,
-                    "hidden_sizes": self.hidden_sizes,
+                    "model_name": self.model_name,
+                    "model_kwargs": self.model_kwargs,
                     "global_model": self.global_model,
                     "square_avgs": self._square_avgs,
                     "global_step": self._global_step,
@@ -161,6 +138,7 @@ class A3C:
                     "num_steps": num_steps,
                     "seed": seed + worker_id,
                     "learning_rate": self.learning_rate,
+                    "value_loss_coef": self.value_loss_coef,
                     "discount_factor": self.discount_factor,
                     "rollout_steps": self.rollout_steps,
                     "max_grad_norm": self.max_grad_norm,
@@ -247,8 +225,9 @@ def worker_main(
     env_id: str,
     state_size: int,
     num_actions: int,
-    hidden_sizes: list[int],
-    global_model: ActorCriticNet,
+    model_name: str,
+    model_kwargs: dict[str, Any],
+    global_model: nn.Module,
     square_avgs: list[torch.Tensor],
     global_step: Synchronized,
     update_lock: Lock,
@@ -256,6 +235,7 @@ def worker_main(
     num_steps: int,
     seed: int,
     learning_rate: float,
+    value_loss_coef: float,
     discount_factor: float,
     rollout_steps: int,
     max_grad_norm: float | None,
@@ -271,10 +251,11 @@ def worker_main(
     env = gym.make(env_id)
     env.action_space.seed(seed)
     task_adapter = make_task_adapter(env, env_id)
-    local_model = ActorCriticNet(
-        state_size=state_size,
+    local_model = build_actor_critic_model(
+        name=model_name,
+        observation_shape=(state_size,),
         num_actions=num_actions,
-        hidden_sizes=hidden_sizes,
+        kwargs=model_kwargs,
     ).cpu()
 
     observation, _info = env.reset(seed=seed)
@@ -310,6 +291,7 @@ def worker_main(
                 rollout_end_state=rollout.next_state,
                 terminal=rollout.done,
                 discount_factor=discount_factor,
+                value_loss_coef=value_loss_coef,
                 entropy_coef=entropy_coef,
             )
 
@@ -318,7 +300,7 @@ def worker_main(
             grads = [param.grad for param in local_model.parameters()]
 
             with update_lock:
-                grad_norm = _clip_grad_norm(grads, max_grad_norm)
+                grad_norm = clip_grad_tensors(grads, max_grad_norm)
                 _shared_rmsprop_step(
                     params=list(global_model.parameters()),
                     grads=grads,
@@ -381,7 +363,7 @@ class _LossInfo:
 
 def _collect_rollout(
     *,
-    model: ActorCriticNet,
+    model: nn.Module,
     state: State,
     env: gym.Env[NDArray[np.float32], int],
     task_adapter: VectorTaskAdapter,
@@ -438,7 +420,7 @@ def _collect_rollout(
 
 def _compute_loss(
     *,
-    model: ActorCriticNet,
+    model: nn.Module,
     states: list[State],
     rewards: list[float],
     log_probs: list[torch.Tensor],
@@ -447,6 +429,7 @@ def _compute_loss(
     rollout_end_state: State,
     terminal: bool,
     discount_factor: float,
+    value_loss_coef: float,
     entropy_coef: float,
 ) -> _LossInfo:
     returns = _compute_rollout_returns(
@@ -464,7 +447,7 @@ def _compute_loss(
     policy_loss = -(log_probs_tensor * advantages.detach()).mean()
     value_loss = F.mse_loss(values_tensor, returns)
     entropy = entropies_tensor.mean()
-    loss = policy_loss + value_loss - entropy_coef * entropy
+    loss = policy_loss + value_loss_coef * value_loss - entropy_coef * entropy
     return _LossInfo(
         loss=loss,
         policy_loss=policy_loss,
@@ -476,56 +459,27 @@ def _compute_loss(
 @torch.no_grad()
 def _compute_rollout_returns(
     *,
-    model: ActorCriticNet,
+    model: nn.Module,
     rewards: list[float],
     rollout_end_state: State,
     terminal: bool,
     discount_factor: float,
 ) -> torch.Tensor:
     if terminal:
-        rollout_return = torch.zeros((), dtype=torch.float32)
+        bootstrap_value = torch.zeros((), dtype=torch.float32)
     else:
         state_tensor = torch.as_tensor(
             rollout_end_state, dtype=torch.float32
         ).unsqueeze(0)
         _logits, value = model(state_tensor)
-        rollout_return = value.reshape(())
+        bootstrap_value = value.reshape(())
 
-    returns: list[torch.Tensor] = []
-    for reward in reversed(rewards):
-        rollout_return = torch.as_tensor(reward, dtype=torch.float32) + (
-            discount_factor * rollout_return
-        )
-        returns.append(rollout_return)
-
-    returns.reverse()
-    return torch.stack(returns)
-
-
-@torch.no_grad()
-def _clip_grad_norm(
-    grads: list[torch.Tensor | None],
-    max_grad_norm: float | None,
-) -> float | None:
-    if max_grad_norm is None:
-        return None
-
-    grad_tensors = [grad for grad in grads if grad is not None]
-    if not grad_tensors:
-        return 0.0
-
-    total_norm = math.sqrt(
-        sum(
-            float(torch.sum(grad.detach() * grad.detach()).item())
-            for grad in grad_tensors
-        )
+    rewards_tensor = torch.as_tensor(rewards, dtype=torch.float32)
+    return compute_discounted_returns(
+        rewards=rewards_tensor,
+        bootstrap_value=bootstrap_value,
+        discount_factor=discount_factor,
     )
-    if total_norm > max_grad_norm:
-        scale = max_grad_norm / (total_norm + 1e-6)
-        for grad in grad_tensors:
-            grad.mul_(scale)
-
-    return total_norm
 
 
 @torch.no_grad()
@@ -556,13 +510,13 @@ def _validate_model_outputs(
 ) -> None:
     if logits.shape != (batch_size, num_actions):
         msg = (
-            "ActorCriticNet policy head must return logits with shape "
+            "Actor-critic model policy head must return logits with shape "
             f"({batch_size}, {num_actions}), got {logits.shape}."
         )
         raise ValueError(msg)
     if values.shape != (batch_size,):
         msg = (
-            "ActorCriticNet value head must return values with shape "
+            "Actor-critic model value head must return values with shape "
             f"({batch_size},), got {values.shape}."
         )
         raise ValueError(msg)
@@ -572,25 +526,20 @@ def validate_actor_critic_model_shape(
     *,
     state_size: int,
     num_actions: int,
-    hidden_sizes: list[int],
 ) -> None:
     if state_size <= 0:
         raise ValueError("state_size must be positive.")
     if num_actions <= 0:
         raise ValueError("num_actions must be positive.")
-    if not hidden_sizes:
-        raise ValueError("hidden_sizes must not be empty.")
-    if any(hidden_size <= 0 for hidden_size in hidden_sizes):
-        raise ValueError("hidden_sizes values must be positive.")
 
 
 def validate_a3c_hyperparameters(
     *,
     state_size: int,
     num_actions: int,
-    hidden_sizes: list[int],
     num_workers: int,
     learning_rate: float,
+    value_loss_coef: float,
     discount_factor: float,
     rollout_steps: int,
     max_grad_norm: float | None,
@@ -601,12 +550,13 @@ def validate_a3c_hyperparameters(
     validate_actor_critic_model_shape(
         state_size=state_size,
         num_actions=num_actions,
-        hidden_sizes=hidden_sizes,
     )
     if num_workers <= 0:
         raise ValueError("num_workers must be positive.")
     if learning_rate <= 0.0:
         raise ValueError("learning_rate must be positive.")
+    if value_loss_coef < 0.0:
+        raise ValueError("value_loss_coef must be non-negative.")
     if not 0.0 <= discount_factor <= 1.0:
         raise ValueError("discount_factor must be in [0, 1].")
     if rollout_steps <= 0:

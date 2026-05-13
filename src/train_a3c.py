@@ -1,78 +1,29 @@
 import argparse
-import random
 from collections import deque
 from dataclasses import replace
-from datetime import datetime
 from pathlib import Path
 
-import gymnasium as gym
 import numpy as np
-import torch
 
-from a3c import A3C, A3CLog, ActorCriticNet
+from a3c import A3C, A3CLog
 from config import A3CConfig, load_a3c_config, save_config
+from envs import EnvPoolVecEnv
+from experiment import (
+    create_run_dir,
+    evaluate_actor_critic_policy,
+    set_random_seeds,
+)
 from metrics import JSONLMetricsLogger
+from models import build_actor_critic_model
 from plot_metrics import plot_metrics
-from task_adapter import VectorTaskAdapter, make_task_adapter
-
-
-def set_random_seeds(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
 
 
 def inspect_env(env_id: str) -> tuple[int, int]:
-    env = gym.make(env_id)
+    env = EnvPoolVecEnv(env_id=env_id, num_envs=1, seed=0)
     try:
-        task_adapter = make_task_adapter(env, env_id)
-        return task_adapter.state_size, task_adapter.num_actions
+        return int(np.prod(env.observation_shape)), env.num_actions
     finally:
         env.close()
-
-
-@torch.no_grad()
-def evaluate_policy(
-    model: ActorCriticNet,
-    task_adapter: VectorTaskAdapter,
-    num_episodes: int,
-    seed: int,
-) -> list[float]:
-    was_training = model.training
-    model.eval()
-    episode_returns: list[float] = []
-
-    for episode_index in range(num_episodes):
-        observation, _info = task_adapter.env.reset(seed=seed + episode_index)
-        state = task_adapter.encode_observation(observation)
-        done = False
-        episode_return = 0.0
-
-        while not done:
-            state_tensor = torch.as_tensor(state, dtype=torch.float32).unsqueeze(0)
-            logits, _value = model(state_tensor)
-            if logits.shape != (1, task_adapter.num_actions):
-                msg = (
-                    "Policy head action dimension must match the task adapter: "
-                    f"expected (1, {task_adapter.num_actions}), got {logits.shape}"
-                )
-                raise ValueError(msg)
-
-            action_index = int(logits.argmax(dim=1).item())
-            env_action = task_adapter.action_index_to_env_action(action_index)
-            observation, reward, terminated, truncated, _info = task_adapter.env.step(
-                env_action
-            )
-            state = task_adapter.encode_observation(observation)
-            episode_return += float(reward)
-            done = terminated or truncated
-
-        episode_returns.append(episode_return)
-
-    if was_training:
-        model.train()
-
-    return episode_returns
 
 
 def parse_args() -> argparse.Namespace:
@@ -113,18 +64,6 @@ def resolve_config(args: argparse.Namespace) -> A3CConfig:
     return config
 
 
-def create_run_dir(config: A3CConfig, requested_run_dir: Path | None) -> Path:
-    if requested_run_dir is not None:
-        run_dir = requested_run_dir
-    else:
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        run_name = f"{timestamp}-{config.experiment.name}-seed{config.seed}"
-        run_dir = Path(config.experiment.run_root) / run_name
-
-    run_dir.mkdir(parents=True, exist_ok=requested_run_dir is not None)
-    return run_dir
-
-
 def main() -> None:
     args = parse_args()
     config = resolve_config(args)
@@ -138,9 +77,11 @@ def main() -> None:
         env_id=config.env.id,
         state_size=state_size,
         num_actions=num_actions,
-        hidden_sizes=config.model.hidden_sizes,
+        model_name=config.model.name,
+        model_kwargs=config.model.kwargs,
         num_workers=config.train.num_workers,
         learning_rate=config.train.learning_rate,
+        value_loss_coef=config.train.value_loss_coef,
         discount_factor=config.train.discount_factor,
         rollout_steps=config.train.rollout_steps,
         max_grad_norm=config.train.max_grad_norm,
@@ -149,13 +90,12 @@ def main() -> None:
         rmsprop_eps=config.train.rmsprop_eps,
     )
 
-    eval_env = gym.make(config.env.id)
-    eval_env.action_space.seed(config.eval.seed)
-    eval_adapter = make_task_adapter(eval_env, config.env.id)
-    eval_model = ActorCriticNet(
-        state_size=state_size,
+    eval_env = EnvPoolVecEnv(env_id=config.env.id, num_envs=1, seed=config.eval.seed)
+    eval_model = build_actor_critic_model(
+        name=config.model.name,
+        observation_shape=eval_env.observation_shape,
         num_actions=num_actions,
-        hidden_sizes=config.model.hidden_sizes,
+        kwargs=config.model.kwargs,
     )
     recent_returns: deque[float] = deque(maxlen=20)
     next_loss_step = config.logging.loss_every_steps
@@ -213,11 +153,10 @@ def main() -> None:
                 next_eval_step += config.eval.every_steps
 
             eval_model.load_state_dict(agent.snapshot_state_dict())
-            returns = evaluate_policy(
-                eval_model,
-                eval_adapter,
+            returns = evaluate_actor_critic_policy(
+                model=eval_model,
+                env=eval_env,
                 num_episodes=config.eval.episodes,
-                seed=config.eval.seed,
             )
             eval_mean_return = float(np.mean(returns))
             eval_std_return = float(np.std(returns))
