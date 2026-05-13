@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
-from envs import DiscreteVecEnv, ObservationBatch
+from envs import BoxActionSpec, DiscreteActionSpec, ObservationBatch, VecEnv
 from experiment import model_device
 from rl_math import clip_grad_norm, compute_gae
 
@@ -60,7 +60,7 @@ class _Rollout:
 class PPO:
     def __init__(
         self,
-        env: DiscreteVecEnv,
+        env: VecEnv,
         model: nn.Module,
         *,
         learning_rate: float,
@@ -87,15 +87,12 @@ class PPO:
             entropy_coef=entropy_coef,
             max_grad_norm=max_grad_norm,
         )
-        if env.num_actions <= 0:
-            raise ValueError("env.num_actions must be positive.")
-
         self.env = env
         self.model = model
         self.device = model_device(model)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         self.num_envs = env.num_envs
-        self.num_actions = env.num_actions
+        self.action_spec = env.action_spec
         self.rollout_steps = rollout_steps
         self.minibatch_size = minibatch_size
         self.epochs = epochs
@@ -159,9 +156,10 @@ class PPO:
             dtype=torch.as_tensor(observation).dtype,
             device=self.device,
         )
-        actions = torch.empty(
-            (rollout_steps, self.num_envs),
-            dtype=torch.int64,
+        actions = _empty_action_rollout(
+            action_spec=self.action_spec,
+            rollout_steps=rollout_steps,
+            num_envs=self.num_envs,
             device=self.device,
         )
         rewards = torch.empty((rollout_steps, self.num_envs), device=self.device)
@@ -184,8 +182,7 @@ class PPO:
                 *self.env.observation_shape,
             )
             observations[rollout_index] = observation_tensor
-            logits, value = self.model(observation_tensor)
-            assert logits.shape == (self.num_envs, self.num_actions)
+            dist, value = self.model(observation_tensor)
             assert value.shape == (self.num_envs,)
             if previous_non_done_slots is not None:
                 assert rollout_index > 0
@@ -193,10 +190,9 @@ class PPO:
                     previous_non_done_slots
                 ]
 
-            dist = torch.distributions.Categorical(logits=logits)
-            action_index = dist.sample()
-            log_prob = dist.log_prob(action_index)
-            step = self.env.step(action_index.cpu().numpy().astype(np.int32))
+            action = dist.sample()
+            log_prob = dist.log_prob(action)
+            step = self.env.step(action.cpu().numpy())
 
             assert step.observation.shape == (self.num_envs, *observation_shape)
             assert step.reward.shape == (self.num_envs,)
@@ -205,7 +201,7 @@ class PPO:
             assert step.env_id.shape == (self.num_envs,)
             next_observation = np.array(step.observation, copy=True)
 
-            actions[rollout_index] = action_index
+            actions[rollout_index] = action
             rewards[rollout_index] = torch.as_tensor(
                 step.reward, dtype=torch.float32, device=self.device
             )
@@ -306,7 +302,7 @@ class PPO:
     def _update(self, rollout: _Rollout) -> PPOUpdateStats:
         assert rollout.rewards.shape == (rollout.length, self.num_envs)
         assert rollout.observations.shape[:2] == rollout.rewards.shape
-        assert rollout.actions.shape == rollout.rewards.shape
+        assert rollout.actions.shape[:2] == rollout.rewards.shape
         assert rollout.terminated.shape == rollout.rewards.shape
         assert rollout.truncated.shape == rollout.rewards.shape
         assert rollout.old_log_probs.shape == rollout.rewards.shape
@@ -341,8 +337,10 @@ class PPO:
             rollout.observations,
             "rollout_step env ... -> (rollout_step env) ...",
         )
-        actions = rearrange(rollout.actions, "rollout_step env -> (rollout_step env)")
-        actions = actions.to(dtype=torch.int64)
+        actions = rearrange(
+            rollout.actions,
+            "rollout_step env ... -> (rollout_step env) ...",
+        )
         old_log_probs = rearrange(
             rollout.old_log_probs, "rollout_step env -> (rollout_step env)"
         )
@@ -366,11 +364,9 @@ class PPO:
                 minibatch_size,
                 device=self.device,
             ):
-                logits, values = self.model(flat_observations[minibatch_indices])
-                assert logits.shape == (len(minibatch_indices), self.num_actions)
+                dist, values = self.model(flat_observations[minibatch_indices])
                 assert values.shape == (len(minibatch_indices),)
 
-                dist = torch.distributions.Categorical(logits=logits)
                 new_log_probs = dist.log_prob(actions[minibatch_indices])
                 entropy = dist.entropy().mean()
                 ratio = (new_log_probs - old_log_probs[minibatch_indices]).exp()
@@ -440,6 +436,30 @@ def make_minibatch_indices(
         indices[start : start + minibatch_size]
         for start in range(0, num_transitions, minibatch_size)
     ]
+
+
+def _empty_action_rollout(
+    *,
+    action_spec: DiscreteActionSpec | BoxActionSpec,
+    rollout_steps: int,
+    num_envs: int,
+    device: torch.device,
+) -> torch.Tensor:
+    if isinstance(action_spec, DiscreteActionSpec):
+        return torch.empty(
+            (rollout_steps, num_envs),
+            dtype=torch.int64,
+            device=device,
+        )
+    if isinstance(action_spec, BoxActionSpec):
+        return torch.empty(
+            (rollout_steps, num_envs, *action_spec.shape),
+            dtype=torch.float32,
+            device=device,
+        )
+
+    msg = f"Unsupported action spec: {type(action_spec).__name__}."
+    raise TypeError(msg)
 
 
 def validate_ppo_hyperparameters(

@@ -36,7 +36,7 @@ def test_a2c_cartpole_tiny_smoke() -> None:
         model = build_actor_critic_model(
             name="mlp",
             observation_shape=env.observation_shape,
-            num_actions=env.num_actions,
+            action_spec=env.action_spec,
             kwargs={"hidden_sizes": [8]},
         )
         agent = A2C(
@@ -59,8 +59,69 @@ def test_ppo_cartpole_tiny_smoke() -> None:
         model = build_actor_critic_model(
             name="mlp",
             observation_shape=env.observation_shape,
-            num_actions=env.num_actions,
+            action_spec=env.action_spec,
             kwargs={"hidden_sizes": [8]},
+        )
+        agent = PPO(
+            env,
+            model,
+            learning_rate=1e-3,
+            rollout_steps=2,
+            minibatch_size=4,
+            epochs=1,
+            discount_factor=0.99,
+            gae_lambda=0.95,
+            clip_coef=0.2,
+            value_coef=0.5,
+            entropy_coef=0.0,
+            max_grad_norm=1.0,
+        )
+        agent.train(num_steps=4)
+    finally:
+        env.close()
+
+
+def test_a2c_pendulum_tiny_smoke() -> None:
+    env = EnvPoolVecEnv(env_id="Pendulum-v1", num_envs=2, seed=4)
+    try:
+        model = build_actor_critic_model(
+            name="mlp",
+            observation_shape=env.observation_shape,
+            action_spec=env.action_spec,
+            kwargs={
+                "hidden_sizes": [8],
+                "init_log_std": 0.0,
+                "log_std_min": -20.0,
+                "log_std_max": 2.0,
+            },
+        )
+        agent = A2C(
+            env,
+            model,
+            learning_rate=1e-3,
+            value_loss_coef=0.5,
+            discount_factor=0.99,
+            rollout_steps=2,
+            max_grad_norm=1.0,
+        )
+        agent.train(num_steps=4)
+    finally:
+        env.close()
+
+
+def test_ppo_pendulum_tiny_smoke() -> None:
+    env = EnvPoolVecEnv(env_id="Pendulum-v1", num_envs=2, seed=5)
+    try:
+        model = build_actor_critic_model(
+            name="mlp",
+            observation_shape=env.observation_shape,
+            action_spec=env.action_spec,
+            kwargs={
+                "hidden_sizes": [8],
+                "init_log_std": 0.0,
+                "log_std_min": -20.0,
+                "log_std_max": 2.0,
+            },
         )
         agent = PPO(
             env,

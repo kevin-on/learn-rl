@@ -1,0 +1,40 @@
+experiment:
+  name: half_cheetah_ppo
+  run_root: runs
+
+seed: 123
+
+env:
+  id: HalfCheetah-v5
+  kind: vector
+  num_envs: 16
+
+model:
+  name: mlp
+  kwargs:
+    hidden_sizes: [64, 64]
+    init_log_std: 0.0
+    log_std_min: -20.0
+    log_std_max: 2.0
+
+train:
+  steps: 1000000
+  learning_rate: 0.0003
+  discount_factor: 0.99
+  gae_lambda: 0.95
+  rollout_steps: 512
+  minibatch_size: 256
+  epochs: 10
+  clip_coef: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.0
+  max_grad_norm: 0.5
+
+eval:
+  every_steps: 25000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 5000
+  save_plot: true

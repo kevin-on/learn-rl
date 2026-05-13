@@ -80,7 +80,7 @@ def main() -> None:
     model = build_actor_critic_model(
         name=config.model.name,
         observation_shape=train_env.observation_shape,
-        num_actions=train_env.num_actions,
+        action_spec=train_env.action_spec,
         kwargs=config.model.kwargs,
     ).to(device)
 

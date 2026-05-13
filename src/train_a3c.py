@@ -7,7 +7,7 @@ import numpy as np
 
 from a3c import A3C, A3CLog
 from config import A3CConfig, load_a3c_config, save_config
-from envs import EnvPoolVecEnv
+from envs import DiscreteActionSpec, EnvPoolVecEnv
 from experiment import (
     create_run_dir,
     evaluate_actor_critic_policy,
@@ -94,7 +94,7 @@ def main() -> None:
     eval_model = build_actor_critic_model(
         name=config.model.name,
         observation_shape=eval_env.observation_shape,
-        num_actions=num_actions,
+        action_spec=DiscreteActionSpec(num_actions=num_actions),
         kwargs=config.model.kwargs,
     )
     recent_returns: deque[float] = deque(maxlen=20)

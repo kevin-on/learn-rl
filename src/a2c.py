@@ -7,7 +7,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from envs import DiscreteVecEnv, ObservationBatch
+from envs import ObservationBatch, VecEnv
 from experiment import model_device
 from rl_math import clip_grad_norm, compute_discounted_rollout_returns
 
@@ -53,7 +53,7 @@ class _Rollout:
 class A2C:
     def __init__(
         self,
-        env: DiscreteVecEnv,
+        env: VecEnv,
         model: nn.Module,
         *,
         learning_rate: float,
@@ -69,15 +69,11 @@ class A2C:
             rollout_steps=rollout_steps,
             max_grad_norm=max_grad_norm,
         )
-        if env.num_actions <= 0:
-            raise ValueError("env.num_actions must be positive.")
-
         self.env = env
         self.model = model
         self.device = model_device(model)
         self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         self.num_envs = env.num_envs
-        self.num_actions = env.num_actions
         self.value_loss_coef = value_loss_coef
         self.discount_factor = discount_factor
         self.rollout_steps = rollout_steps
@@ -165,8 +161,7 @@ class A2C:
                 *self.env.observation_shape,
             )
             observations[rollout_index] = observation_tensor
-            logits, value = self.model(observation_tensor)
-            assert logits.shape == (self.num_envs, self.num_actions)
+            dist, value = self.model(observation_tensor)
             assert value.shape == (self.num_envs,)
             if previous_non_done_slots is not None:
                 assert rollout_index > 0
@@ -174,9 +169,8 @@ class A2C:
                     previous_non_done_slots
                 ]
 
-            dist = torch.distributions.Categorical(logits=logits)
-            action_index = dist.sample()
-            step = self.env.step(action_index.cpu().numpy().astype(np.int32))
+            action = dist.sample()
+            step = self.env.step(action.cpu().numpy())
             assert step.observation.shape == (self.num_envs, *observation_shape)
             next_observation = np.array(step.observation, copy=True)
 
@@ -189,7 +183,7 @@ class A2C:
             truncated[rollout_index] = torch.as_tensor(
                 step.truncated, dtype=torch.bool, device=self.device
             )
-            log_probs[rollout_index] = dist.log_prob(action_index)
+            log_probs[rollout_index] = dist.log_prob(action)
             values[rollout_index] = value
             entropies[rollout_index] = dist.entropy()
 

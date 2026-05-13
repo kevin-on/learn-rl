@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from config import ExperimentRunConfig, PPOEnvConfig
-from envs import DiscreteVecEnv, EnvPoolVecEnv
+from envs import DiscreteVecEnv, EnvPoolVecEnv, VecEnv
 
 
 def choose_device(requested_device: str) -> torch.device:
@@ -142,7 +142,7 @@ def evaluate_q_policy(
 def evaluate_actor_critic_policy(
     *,
     model: torch.nn.Module,
-    env: DiscreteVecEnv,
+    env: VecEnv,
     num_episodes: int,
 ) -> list[float]:
     if env.num_envs != 1:
@@ -158,15 +158,9 @@ def evaluate_actor_critic_policy(
         episode_return = 0.0
         while not done:
             observation_tensor = torch.as_tensor(observation, device=device)
-            logits, _value = model(observation_tensor)
-            if logits.shape != (1, env.num_actions):
-                msg = (
-                    "Policy action dimension must match the env: "
-                    f"expected (1, {env.num_actions}), got {logits.shape}"
-                )
-                raise ValueError(msg)
-            action_index = int(logits.argmax(dim=1).item())
-            step = env.step(np.asarray([action_index], dtype=np.int32))
+            dist, _value = model(observation_tensor)
+            action = dist.deterministic()
+            step = env.step(action.cpu().numpy())
             observation = step.observation
             episode_return += float(step.reward[0])
             done = bool(step.terminated[0] or step.truncated[0])

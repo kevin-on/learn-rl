@@ -1,0 +1,34 @@
+experiment:
+  name: pendulum_a2c
+  run_root: runs
+
+seed: 123
+
+env:
+  id: Pendulum-v1
+  num_envs: 8
+
+model:
+  name: mlp
+  kwargs:
+    hidden_sizes: [64, 64]
+    init_log_std: 0.0
+    log_std_min: -20.0
+    log_std_max: 2.0
+
+train:
+  steps: 200000
+  learning_rate: 0.0007
+  value_loss_coef: 0.5
+  discount_factor: 0.99
+  rollout_steps: 20
+  max_grad_norm: 0.5
+
+eval:
+  every_steps: 5000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 1000
+  save_plot: true

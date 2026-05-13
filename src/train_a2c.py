@@ -20,9 +20,7 @@ from plot_metrics import plot_metrics
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Train A2C on an EnvPool discrete-action task."
-    )
+    parser = argparse.ArgumentParser(description="Train A2C on an EnvPool vector task.")
     parser.add_argument(
         "--config",
         type=Path,
@@ -80,7 +78,7 @@ def main() -> None:
     model = build_actor_critic_model(
         name=config.model.name,
         observation_shape=train_env.observation_shape,
-        num_actions=train_env.num_actions,
+        action_spec=train_env.action_spec,
         kwargs=config.model.kwargs,
     ).to(device)
     eval_env = make_envpool_env(

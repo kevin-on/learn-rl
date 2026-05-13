@@ -16,6 +16,7 @@ import torch.nn.functional as F
 from numpy.typing import NDArray
 from torch import nn
 
+from envs import DiscreteActionSpec
 from models import build_actor_critic_model
 from rl_math import clip_grad_tensors, compute_discounted_returns
 from task_adapter import State, VectorTaskAdapter, make_task_adapter
@@ -89,7 +90,7 @@ class A3C:
         self.global_model = build_actor_critic_model(
             name=self.model_name,
             observation_shape=(state_size,),
-            num_actions=num_actions,
+            action_spec=DiscreteActionSpec(num_actions=num_actions),
             kwargs=self.model_kwargs,
         ).cpu()
         self.global_model.share_memory()
@@ -254,7 +255,7 @@ def worker_main(
     local_model = build_actor_critic_model(
         name=model_name,
         observation_shape=(state_size,),
-        num_actions=num_actions,
+        action_spec=DiscreteActionSpec(num_actions=num_actions),
         kwargs=model_kwargs,
     ).cpu()
 
@@ -379,15 +380,12 @@ def _collect_rollout(
 
     while len(states) < rollout_steps and not done:
         state_tensor = torch.as_tensor(state, dtype=torch.float32).unsqueeze(0)
-        logits, value = model(state_tensor)
+        dist, value = model(state_tensor)
         _validate_model_outputs(
-            logits=logits,
             values=value,
-            num_actions=task_adapter.num_actions,
             batch_size=1,
         )
 
-        dist = torch.distributions.Categorical(logits=logits)
         action_index = dist.sample()
         log_prob = dist.log_prob(action_index)
         entropy = dist.entropy()
@@ -471,7 +469,7 @@ def _compute_rollout_returns(
         state_tensor = torch.as_tensor(
             rollout_end_state, dtype=torch.float32
         ).unsqueeze(0)
-        _logits, value = model(state_tensor)
+        _dist, value = model(state_tensor)
         bootstrap_value = value.reshape(())
 
     rewards_tensor = torch.as_tensor(rewards, dtype=torch.float32)
@@ -503,17 +501,9 @@ def _shared_rmsprop_step(
 
 def _validate_model_outputs(
     *,
-    logits: torch.Tensor,
     values: torch.Tensor,
-    num_actions: int,
     batch_size: int,
 ) -> None:
-    if logits.shape != (batch_size, num_actions):
-        msg = (
-            "Actor-critic model policy head must return logits with shape "
-            f"({batch_size}, {num_actions}), got {logits.shape}."
-        )
-        raise ValueError(msg)
     if values.shape != (batch_size,):
         msg = (
             "Actor-critic model value head must return values with shape "

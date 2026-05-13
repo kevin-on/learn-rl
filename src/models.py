@@ -6,6 +6,9 @@ import torch
 from einops import rearrange
 from torch import nn
 
+from envs import ActionSpec, DiscreteActionSpec
+from policies import CategoricalPolicyDistribution, DiagGaussianPolicyDistribution
+
 
 def validate_hidden_sizes(hidden_sizes: list[int]) -> None:
     if not hidden_sizes:
@@ -18,6 +21,7 @@ def build_mlp_layers(
     *,
     input_size: int,
     hidden_sizes: list[int],
+    activation: str = "relu",
 ) -> tuple[nn.Sequential, int]:
     if input_size <= 0:
         raise ValueError("input_size must be positive.")
@@ -26,9 +30,24 @@ def build_mlp_layers(
     layers: list[nn.Module] = []
     layer_input_size = input_size
     for hidden_size in hidden_sizes:
-        layers.extend([nn.Linear(layer_input_size, hidden_size), nn.ReLU()])
+        layers.extend(
+            [
+                nn.Linear(layer_input_size, hidden_size),
+                _activation_layer(activation),
+            ]
+        )
         layer_input_size = hidden_size
     return nn.Sequential(*layers), layer_input_size
+
+
+def _activation_layer(name: str) -> nn.Module:
+    if name == "relu":
+        return nn.ReLU()
+    if name == "tanh":
+        return nn.Tanh()
+
+    msg = f"activation must be one of: relu, tanh; got {name!r}."
+    raise ValueError(msg)
 
 
 class QNetwork(nn.Module):
@@ -78,13 +97,68 @@ class ActorCriticMLP(nn.Module):
         self.policy_head = nn.Linear(trunk_output_size, num_actions)
         self.value_head = nn.Linear(trunk_output_size, 1)
 
-    def forward(self, observations: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, observations: torch.Tensor
+    ) -> tuple[CategoricalPolicyDistribution, torch.Tensor]:
         observations = observations.to(dtype=torch.float32)
         observations = rearrange(observations, "batch ... -> batch (...)")
         features = self.trunk(observations)
         policy_logits = self.policy_head(features)
         state_values = self.value_head(features).squeeze(-1)
-        return policy_logits, state_values
+        return CategoricalPolicyDistribution(policy_logits), state_values
+
+
+class ContinuousActorCriticMLP(nn.Module):
+    def __init__(
+        self,
+        observation_shape: tuple[int, ...],
+        action_shape: tuple[int, ...],
+        hidden_sizes: list[int],
+        init_log_std: float,
+        log_std_min: float,
+        log_std_max: float,
+    ) -> None:
+        super().__init__()
+        observation_size = math.prod(observation_shape)
+        action_size = math.prod(action_shape)
+        if observation_size <= 0:
+            raise ValueError("observation_size must be positive.")
+        if action_size <= 0:
+            raise ValueError("action_size must be positive.")
+
+        self.action_shape = action_shape
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
+        self.trunk, trunk_output_size = build_mlp_layers(
+            input_size=observation_size,
+            hidden_sizes=hidden_sizes,
+            activation="tanh",
+        )
+        self.mean_head = nn.Linear(trunk_output_size, action_size)
+        self.log_std = nn.Parameter(torch.full((action_size,), float(init_log_std)))
+        self.value_head = nn.Linear(trunk_output_size, 1)
+
+    def forward(
+        self, observations: torch.Tensor
+    ) -> tuple[DiagGaussianPolicyDistribution, torch.Tensor]:
+        observations = observations.to(dtype=torch.float32)
+        observations = rearrange(observations, "batch ... -> batch (...)")
+        features = self.trunk(observations)
+        mean = self.mean_head(features).reshape(
+            observations.shape[0],
+            *self.action_shape,
+        )
+        log_std = self.log_std.reshape(self.action_shape).expand_as(mean)
+        state_values = self.value_head(features).squeeze(-1)
+        return (
+            DiagGaussianPolicyDistribution(
+                mean=mean,
+                log_std=log_std,
+                log_std_min=self.log_std_min,
+                log_std_max=self.log_std_max,
+            ),
+            state_values,
+        )
 
 
 class ActorCriticCNN(nn.Module):
@@ -120,12 +194,14 @@ class ActorCriticCNN(nn.Module):
         self.policy_head = nn.Linear(hidden_size, num_actions)
         self.value_head = nn.Linear(hidden_size, 1)
 
-    def forward(self, observations: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, observations: torch.Tensor
+    ) -> tuple[CategoricalPolicyDistribution, torch.Tensor]:
         observations = observations.to(dtype=torch.float32) / 255.0
         features = self.fc(self.convs(observations))
         policy_logits = self.policy_head(features)
         state_values = self.value_head(features).squeeze(-1)
-        return policy_logits, state_values
+        return CategoricalPolicyDistribution(policy_logits), state_values
 
 
 type ModelFactory = type[nn.Module]
@@ -170,7 +246,7 @@ def build_actor_critic_model(
     *,
     name: str,
     observation_shape: tuple[int, ...],
-    num_actions: int,
+    action_spec: ActionSpec,
     kwargs: Mapping[str, Any],
 ) -> nn.Module:
     factory = ACTOR_CRITIC_FACTORIES.get(name)
@@ -180,9 +256,18 @@ def build_actor_critic_model(
         raise ValueError(msg)
 
     try:
-        return factory(
+        if isinstance(action_spec, DiscreteActionSpec):
+            return factory(
+                observation_shape=observation_shape,
+                num_actions=action_spec.num_actions,
+                **dict(kwargs),
+            )
+        if name != "mlp":
+            msg = f"Actor-critic model {name!r} does not support Box action spaces."
+            raise ValueError(msg)
+        return ContinuousActorCriticMLP(
             observation_shape=observation_shape,
-            num_actions=num_actions,
+            action_shape=action_spec.shape,
             **dict(kwargs),
         )
     except TypeError as exc:
