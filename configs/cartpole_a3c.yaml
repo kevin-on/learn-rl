@@ -8,7 +8,7 @@ env:
   id: CartPole-v1
 
 model:
-  name: mlp
+  name: unshared_mlp
   kwargs:
     hidden_sizes: [128, 128]
 
