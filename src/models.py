@@ -57,7 +57,7 @@ class QNetwork(nn.Module):
         return self.q_head(self.trunk(observations))
 
 
-class ActorCriticMLP(nn.Module):
+class SharedActorCriticMLP(nn.Module):
     def __init__(
         self,
         observation_shape: tuple[int, ...],
@@ -84,6 +84,41 @@ class ActorCriticMLP(nn.Module):
         features = self.trunk(observations)
         policy_logits = self.policy_head(features)
         state_values = self.value_head(features).squeeze(-1)
+        return policy_logits, state_values
+
+
+class UnsharedActorCriticMLP(nn.Module):
+    def __init__(
+        self,
+        observation_shape: tuple[int, ...],
+        num_actions: int,
+        hidden_sizes: list[int],
+    ) -> None:
+        super().__init__()
+        observation_size = math.prod(observation_shape)
+        if observation_size <= 0:
+            raise ValueError("observation_size must be positive.")
+        if num_actions <= 0:
+            raise ValueError("num_actions must be positive.")
+
+        self.policy_trunk, policy_output_size = build_mlp_layers(
+            input_size=observation_size,
+            hidden_sizes=hidden_sizes,
+        )
+        self.value_trunk, value_output_size = build_mlp_layers(
+            input_size=observation_size,
+            hidden_sizes=hidden_sizes,
+        )
+        self.policy_head = nn.Linear(policy_output_size, num_actions)
+        self.value_head = nn.Linear(value_output_size, 1)
+
+    def forward(self, observations: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        observations = observations.to(dtype=torch.float32)
+        observations = rearrange(observations, "batch ... -> batch (...)")
+        policy_features = self.policy_trunk(observations)
+        value_features = self.value_trunk(observations)
+        policy_logits = self.policy_head(policy_features)
+        state_values = self.value_head(value_features).squeeze(-1)
         return policy_logits, state_values
 
 
@@ -137,7 +172,9 @@ Q_MODEL_FACTORIES: dict[str, ModelFactory] = {
 
 
 ACTOR_CRITIC_FACTORIES: dict[str, ModelFactory] = {
-    "mlp": ActorCriticMLP,
+    "mlp": SharedActorCriticMLP,
+    "shared_mlp": SharedActorCriticMLP,
+    "unshared_mlp": UnsharedActorCriticMLP,
     "atari_cnn": ActorCriticCNN,
 }
 
