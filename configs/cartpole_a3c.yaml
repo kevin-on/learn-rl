@@ -6,6 +6,7 @@ seed: 123
 
 env:
   id: CartPole-v1
+  num_envs: 1
 
 model:
   name: discrete_mlp

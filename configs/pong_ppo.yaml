@@ -6,16 +6,16 @@ seed: 123
 
 env:
   id: Pong-v5
-  kind: atari
   num_envs: 8
-  stack_num: 4
-  frame_skip: 4
-  noop_max: 30
-  episodic_life: false
-  reward_clip: false
-  img_height: 84
-  img_width: 84
-  gray_scale: true
+  atari:
+    stack_num: 4
+    frame_skip: 4
+    noop_max: 30
+    episodic_life: false
+    reward_clip: false
+    img_height: 84
+    img_width: 84
+    gray_scale: true
 
 model:
   name: atari_cnn

@@ -6,7 +6,6 @@ seed: 123
 
 env:
   id: Pendulum-v1
-  kind: vector
   num_envs: 8
 
 model:
