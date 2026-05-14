@@ -6,7 +6,6 @@ seed: 123
 
 env:
   id: HalfCheetah-v5
-  kind: vector
   num_envs: 16
 
 model:

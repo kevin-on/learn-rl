@@ -44,9 +44,17 @@ class VecEnvStep:
 
 
 class VecEnv(Protocol):
-    num_envs: int
-    observation_shape: tuple[int, ...]
-    action_spec: ActionSpec
+    @property
+    def num_envs(self) -> int:
+        raise NotImplementedError
+
+    @property
+    def observation_shape(self) -> tuple[int, ...]:
+        raise NotImplementedError
+
+    @property
+    def action_spec(self) -> ActionSpec:
+        raise NotImplementedError
 
     def reset(self) -> ObservationBatch:
         raise NotImplementedError
@@ -62,7 +70,9 @@ class VecEnv(Protocol):
 
 
 class DiscreteVecEnv(VecEnv, Protocol):
-    num_actions: int
+    @property
+    def num_actions(self) -> int:
+        raise NotImplementedError
 
 
 class EnvPoolVecEnv(VecEnv):
@@ -89,14 +99,13 @@ class EnvPoolVecEnv(VecEnv):
         if not isinstance(self.env.observation_space, spaces.Box):
             raise TypeError("EnvPoolVecEnv requires a Box observation space.")
         if isinstance(self.env.action_space, spaces.Discrete):
-            self.action_spec: ActionSpec = DiscreteActionSpec(
+            self._action_spec: ActionSpec = DiscreteActionSpec(
                 num_actions=int(self.env.action_space.n),
                 start=int(getattr(self.env.action_space, "start", 0)),
             )
-            self.num_actions = self.action_spec.num_actions
         elif isinstance(self.env.action_space, spaces.Box):
             action_space = self.env.action_space
-            self.action_spec = BoxActionSpec(
+            self._action_spec = BoxActionSpec(
                 shape=tuple(int(size) for size in action_space.shape),
                 low=np.asarray(action_space.low, dtype=action_space.dtype),
                 high=np.asarray(action_space.high, dtype=action_space.dtype),
@@ -106,10 +115,29 @@ class EnvPoolVecEnv(VecEnv):
             msg = "EnvPoolVecEnv requires a Discrete or Box action space."
             raise TypeError(msg)
 
-        self.num_envs = num_envs
-        self.observation_shape = tuple(
+        self._num_envs = num_envs
+        self._observation_shape = tuple(
             int(size) for size in self.env.observation_space.shape
         )
+
+    @property
+    def num_envs(self) -> int:
+        return self._num_envs
+
+    @property
+    def observation_shape(self) -> tuple[int, ...]:
+        return self._observation_shape
+
+    @property
+    def action_spec(self) -> ActionSpec:
+        return self._action_spec
+
+    @property
+    def num_actions(self) -> int:
+        action_spec = self.action_spec
+        if not isinstance(action_spec, DiscreteActionSpec):
+            raise AttributeError("continuous-action envs do not have num_actions.")
+        return action_spec.num_actions
 
     def reset(self) -> ObservationBatch:
         observation, _info = self.env.reset()
@@ -164,6 +192,142 @@ class EnvPoolVecEnv(VecEnv):
 
         msg = f"Unsupported action spec: {type(self.action_spec).__name__}."
         raise TypeError(msg)
+
+
+class RunningMeanStd:
+    def __init__(self, *, shape: tuple[int, ...], epsilon: float = 1e-4) -> None:
+        if epsilon < 0.0:
+            raise ValueError("epsilon must be non-negative.")
+
+        self.mean = np.zeros(shape, dtype=np.float64)
+        self.var = np.ones(shape, dtype=np.float64)
+        self.count = float(epsilon)
+
+    def update(self, batch: ObservationBatch) -> None:
+        batch_array = np.asarray(batch, dtype=np.float64)
+        if batch_array.ndim == 0:
+            raise ValueError("batch must include a leading batch dimension.")
+        if batch_array.shape[1:] != self.mean.shape:
+            msg = (
+                "batch observation shape must match running-stat shape: "
+                f"{batch_array.shape[1:]} != {self.mean.shape}."
+            )
+            raise ValueError(msg)
+        if batch_array.shape[0] == 0:
+            return
+
+        self.update_from_moments(
+            batch_mean=np.mean(batch_array, axis=0),
+            batch_var=np.var(batch_array, axis=0),
+            batch_count=batch_array.shape[0],
+        )
+
+    def update_from_moments(
+        self,
+        *,
+        batch_mean: NDArray[np.float64],
+        batch_var: NDArray[np.float64],
+        batch_count: int,
+    ) -> None:
+        if batch_count < 0:
+            raise ValueError("batch_count must be non-negative.")
+        if batch_count == 0:
+            return
+
+        delta = batch_mean - self.mean
+        total_count = self.count + batch_count
+        new_mean = self.mean + delta * batch_count / total_count
+
+        current_m2 = self.var * self.count
+        batch_m2 = batch_var * batch_count
+        correction = np.square(delta) * self.count * batch_count / total_count
+        new_var = (current_m2 + batch_m2 + correction) / total_count
+
+        self.mean = new_mean
+        self.var = np.maximum(new_var, 0.0)
+        self.count = total_count
+
+
+class NormalizeObservationVecEnv(VecEnv):
+    def __init__(
+        self,
+        env: VecEnv,
+        *,
+        training: bool,
+        observation_rms: RunningMeanStd | None = None,
+        clip: float = 10.0,
+        epsilon: float = 1e-8,
+    ) -> None:
+        if clip <= 0.0:
+            raise ValueError("clip must be positive.")
+        if epsilon <= 0.0:
+            raise ValueError("epsilon must be positive.")
+
+        self.env = env
+        self.training = training
+        self.observation_rms = observation_rms or RunningMeanStd(
+            shape=self.observation_shape
+        )
+        if self.observation_rms.mean.shape != self.observation_shape:
+            msg = (
+                "observation_rms shape must match env.observation_shape: "
+                f"{self.observation_rms.mean.shape} != {self.observation_shape}."
+            )
+            raise ValueError(msg)
+        self.clip = float(clip)
+        self.epsilon = float(epsilon)
+
+    @property
+    def num_envs(self) -> int:
+        return self.env.num_envs
+
+    @property
+    def observation_shape(self) -> tuple[int, ...]:
+        return self.env.observation_shape
+
+    @property
+    def action_spec(self) -> ActionSpec:
+        return self.env.action_spec
+
+    @property
+    def num_actions(self) -> int:
+        action_spec = self.action_spec
+        if not isinstance(action_spec, DiscreteActionSpec):
+            raise AttributeError("continuous-action envs do not have num_actions.")
+        return action_spec.num_actions
+
+    def reset(self) -> ObservationBatch:
+        observation = self.env.reset()
+        return self._update_and_normalize(observation)
+
+    def step(self, actions: ActionBatch) -> VecEnvStep:
+        step = self.env.step(actions)
+        return VecEnvStep(
+            observation=self._update_and_normalize(step.observation),
+            reward=step.reward,
+            terminated=step.terminated,
+            truncated=step.truncated,
+            env_id=step.env_id,
+            info=step.info,
+        )
+
+    def reset_subset(self, env_ids: EnvIdBatch) -> ObservationBatch:
+        observation = self.env.reset_subset(env_ids)
+        return self._update_and_normalize(observation)
+
+    def normalize_observation(self, observation: ObservationBatch) -> ObservationBatch:
+        normalized = (
+            np.asarray(observation, dtype=np.float64) - self.observation_rms.mean
+        ) / np.sqrt(self.observation_rms.var + self.epsilon)
+        return np.clip(normalized, -self.clip, self.clip).astype(np.float32)
+
+    def close(self) -> None:
+        self.env.close()
+
+    def _update_and_normalize(self, observation: ObservationBatch) -> ObservationBatch:
+        if self.training:
+            self.observation_rms.update(observation)
+        return self.normalize_observation(observation)
 
 
 def _observation_batch(value: ArrayLike, *, batch_size: int) -> ObservationBatch:

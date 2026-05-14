@@ -1,6 +1,5 @@
 import argparse
 from collections import deque
-from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -60,7 +59,9 @@ def parse_args() -> argparse.Namespace:
 def resolve_config(args: argparse.Namespace) -> A3CConfig:
     config = load_a3c_config(args.config, overrides=args.overrides)
     if args.no_plot:
-        config = replace(config, logging=replace(config.logging, save_plot=False))
+        config = config.model_copy(
+            update={"logging": config.logging.model_copy(update={"save_plot": False})}
+        )
     return config
 
 

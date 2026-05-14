@@ -1,6 +1,5 @@
 import argparse
 from collections import deque
-from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +10,8 @@ from experiment import (
     create_run_dir,
     evaluate_actor_critic_policy,
     make_envpool_env,
+    observation_normalization_stats,
+    save_observation_normalization_stats,
     set_random_seeds,
 )
 from metrics import JSONLMetricsLogger
@@ -59,7 +60,9 @@ def parse_args() -> argparse.Namespace:
 def resolve_config(args: argparse.Namespace) -> PPOConfig:
     config = load_ppo_config(args.config, overrides=args.overrides)
     if args.no_plot:
-        config = replace(config, logging=replace(config.logging, save_plot=False))
+        config = config.model_copy(
+            update={"logging": config.logging.model_copy(update={"save_plot": False})}
+        )
     return config
 
 
@@ -89,6 +92,7 @@ def main() -> None:
         num_envs=1,
         seed=config.eval.seed,
         evaluation=True,
+        observation_rms=observation_normalization_stats(train_env),
     )
 
     agent = PPO(
@@ -199,6 +203,12 @@ def main() -> None:
         finally:
             train_env.close()
             eval_env.close()
+
+    obs_norm_path = save_observation_normalization_stats(
+        train_env, run_dir / "observation_normalization.npz"
+    )
+    if obs_norm_path is not None:
+        print(f"Saved observation normalization stats to {obs_norm_path}")
 
     if config.logging.save_plot:
         plot_path = run_dir / "metrics.png"

@@ -5,8 +5,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from config import ExperimentRunConfig, PPOEnvConfig
-from envs import DiscreteVecEnv, EnvPoolVecEnv, VecEnv
+from config import ExperimentRunConfig
+from envs import (
+    DiscreteVecEnv,
+    EnvPoolVecEnv,
+    NormalizeObservationVecEnv,
+    RunningMeanStd,
+    VecEnv,
+)
 
 
 def choose_device(requested_device: str) -> torch.device:
@@ -63,19 +69,19 @@ def create_run_dir(
 def envpool_kwargs(
     config: ExperimentRunConfig, *, evaluation: bool = False
 ) -> dict[str, int | bool]:
-    env = config.env
-    if not isinstance(env, PPOEnvConfig) or env.kind != "atari":
+    atari = config.env.atari
+    if atari is None:
         return {}
 
     kwargs: dict[str, int | bool] = {
-        "stack_num": env.stack_num,
-        "frame_skip": env.frame_skip,
-        "noop_max": env.noop_max,
-        "episodic_life": env.episodic_life,
-        "reward_clip": env.reward_clip,
-        "img_height": env.img_height,
-        "img_width": env.img_width,
-        "gray_scale": env.gray_scale,
+        "stack_num": atari.stack_num,
+        "frame_skip": atari.frame_skip,
+        "noop_max": atari.noop_max,
+        "episodic_life": atari.episodic_life,
+        "reward_clip": atari.reward_clip,
+        "img_height": atari.img_height,
+        "img_width": atari.img_width,
+        "gray_scale": atari.gray_scale,
     }
     if evaluation:
         kwargs["episodic_life"] = False
@@ -89,13 +95,49 @@ def make_envpool_env(
     num_envs: int,
     seed: int,
     evaluation: bool = False,
-) -> EnvPoolVecEnv:
-    return EnvPoolVecEnv(
+    observation_rms: RunningMeanStd | None = None,
+) -> VecEnv:
+    env: VecEnv = EnvPoolVecEnv(
         env_id=config.env.id,
         num_envs=num_envs,
         seed=seed,
         env_kwargs=envpool_kwargs(config, evaluation=evaluation),
     )
+    observation_normalization = config.env.observation_normalization
+    if observation_normalization is None:
+        return env
+
+    if evaluation and observation_rms is None:
+        msg = "normalized evaluation envs must share training observation stats."
+        raise ValueError(msg)
+
+    return NormalizeObservationVecEnv(
+        env,
+        training=not evaluation,
+        observation_rms=observation_rms,
+        clip=observation_normalization.clip,
+        epsilon=observation_normalization.epsilon,
+    )
+
+
+def observation_normalization_stats(env: VecEnv) -> RunningMeanStd | None:
+    if isinstance(env, NormalizeObservationVecEnv):
+        return env.observation_rms
+    return None
+
+
+def save_observation_normalization_stats(env: VecEnv, path: Path) -> Path | None:
+    observation_rms = observation_normalization_stats(env)
+    if observation_rms is None:
+        return None
+
+    np.savez(
+        path,
+        mean=observation_rms.mean,
+        var=observation_rms.var,
+        count=np.asarray(observation_rms.count, dtype=np.float64),
+    )
+    return path
 
 
 @torch.no_grad()

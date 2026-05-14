@@ -1,267 +1,241 @@
-from dataclasses import MISSING, asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Self
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+PositiveInt = Annotated[int, Field(gt=0)]
+NonNegativeInt = Annotated[int, Field(ge=0)]
+PositiveFloat = Annotated[float, Field(gt=0.0)]
+NonNegativeFloat = Annotated[float, Field(ge=0.0)]
+Probability = Annotated[float, Field(ge=0.0, le=1.0)]
 
 
-@dataclass(frozen=True)
-class ExperimentConfig:
-    name: str
-    run_root: str = "runs"
+class ConfigModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-@dataclass(frozen=True)
-class EnvConfig:
-    id: str
-    num_envs: int = 1
+class ExperimentConfig(ConfigModel):
+    name: str = Field(min_length=1)
+    run_root: str
 
 
-@dataclass(frozen=True)
-class PPOEnvConfig:
-    id: str
-    kind: str = "vector"
-    num_envs: int = 16
-    stack_num: int = 4
-    frame_skip: int = 4
-    noop_max: int = 30
-    episodic_life: bool = False
-    reward_clip: bool = False
-    img_height: int = 84
-    img_width: int = 84
-    gray_scale: bool = True
+class ObservationNormalizationConfig(ConfigModel):
+    clip: PositiveFloat = 10.0
+    epsilon: PositiveFloat = 1e-8
 
 
-@dataclass(frozen=True)
-class ModelConfig:
-    name: str = "mlp"
-    kwargs: dict[str, Any] = field(default_factory=dict)
+class AtariConfig(ConfigModel):
+    stack_num: PositiveInt
+    frame_skip: PositiveInt
+    noop_max: NonNegativeInt
+    episodic_life: bool
+    reward_clip: bool
+    img_height: PositiveInt
+    img_width: PositiveInt
+    gray_scale: bool
 
 
-@dataclass(frozen=True)
-class DQNTrainConfig:
-    steps: int = 25_000
-    batch_size: int = 64
-    buffer_capacity: int = 50_000
-    learning_starts: int = 0
-    learning_rate: float = 1e-3
-    discount_factor: float = 0.99
-    soft_update_rate: float = 0.005
-    max_grad_norm: float | None = 10.0
+class EnvConfig(ConfigModel):
+    id: str = Field(min_length=1)
+    num_envs: PositiveInt
+    atari: AtariConfig | None = None
+    observation_normalization: ObservationNormalizationConfig | None = None
 
 
-@dataclass(frozen=True)
-class A2CTrainConfig:
-    steps: int = 25_000
-    learning_rate: float = 1e-3
-    value_loss_coef: float = 0.5
-    discount_factor: float = 0.99
-    rollout_steps: int = 5
-    max_grad_norm: float | None = 10.0
+class ModelConfig(ConfigModel):
+    name: str = Field(min_length=1)
+    kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class A3CTrainConfig:
-    steps: int = 25_000
-    num_workers: int = 4
-    learning_rate: float = 1e-3
-    value_loss_coef: float = 0.5
-    discount_factor: float = 0.99
-    rollout_steps: int = 5
-    max_grad_norm: float | None = 10.0
-    entropy_coef: float = 0.01
-    rmsprop_alpha: float = 0.99
-    rmsprop_eps: float = 1e-5
+class DQNTrainConfig(ConfigModel):
+    steps: PositiveInt
+    batch_size: PositiveInt
+    buffer_capacity: PositiveInt
+    learning_starts: NonNegativeInt
+    learning_rate: PositiveFloat
+    discount_factor: Probability
+    soft_update_rate: Probability
+    max_grad_norm: PositiveFloat | None
+
+    @model_validator(mode="after")
+    def validate_capacity(self) -> Self:
+        if self.buffer_capacity < self.batch_size:
+            raise ValueError("train.buffer_capacity must be at least train.batch_size.")
+        return self
 
 
-@dataclass(frozen=True)
-class PPOTrainConfig:
-    steps: int = 25_000
-    learning_rate: float = 3e-4
-    discount_factor: float = 0.99
-    gae_lambda: float = 0.95
-    rollout_steps: int = 128
-    minibatch_size: int = 256
-    epochs: int = 4
-    clip_coef: float = 0.2
-    value_coef: float = 0.5
-    entropy_coef: float = 0.01
-    max_grad_norm: float | None = 0.5
+class A2CTrainConfig(ConfigModel):
+    steps: PositiveInt
+    learning_rate: PositiveFloat
+    value_loss_coef: NonNegativeFloat
+    discount_factor: Probability
+    rollout_steps: PositiveInt
+    max_grad_norm: PositiveFloat | None
 
 
-@dataclass(frozen=True)
-class ExplorationConfig:
-    schedule: str = "linear"
-    start: float = 1.0
-    end: float = 0.05
-    decay_steps: int = 15_000
+class A3CTrainConfig(ConfigModel):
+    steps: PositiveInt
+    num_workers: PositiveInt
+    learning_rate: PositiveFloat
+    value_loss_coef: NonNegativeFloat
+    discount_factor: Probability
+    rollout_steps: PositiveInt
+    max_grad_norm: PositiveFloat | None
+    entropy_coef: NonNegativeFloat
+    rmsprop_alpha: Annotated[float, Field(ge=0.0, lt=1.0)]
+    rmsprop_eps: PositiveFloat
 
 
-@dataclass(frozen=True)
-class EvalConfig:
-    every_steps: int = 5_000
-    episodes: int = 10
-    seed: int = 10_000
+class PPOTrainConfig(ConfigModel):
+    steps: PositiveInt
+    learning_rate: PositiveFloat
+    discount_factor: Probability
+    gae_lambda: Probability
+    rollout_steps: PositiveInt
+    minibatch_size: PositiveInt
+    epochs: PositiveInt
+    clip_coef: PositiveFloat
+    value_coef: NonNegativeFloat
+    entropy_coef: NonNegativeFloat
+    max_grad_norm: PositiveFloat | None
 
 
-@dataclass(frozen=True)
-class LoggingConfig:
-    loss_every_steps: int = 1_000
+class ExplorationConfig(ConfigModel):
+    schedule: str = Field(min_length=1)
+    start: NonNegativeFloat
+    end: NonNegativeFloat
+    decay_steps: PositiveInt
+
+
+class EvalConfig(ConfigModel):
+    every_steps: PositiveInt
+    episodes: PositiveInt
+    seed: NonNegativeInt
+
+
+class LoggingConfig(ConfigModel):
+    loss_every_steps: PositiveInt
     save_plot: bool = True
 
 
-@dataclass(frozen=True)
-class DQNConfig:
+class DQNConfig(ConfigModel):
     experiment: ExperimentConfig
     env: EnvConfig
-    seed: int = 123
-    model: ModelConfig = field(default_factory=ModelConfig)
-    train: DQNTrainConfig = field(default_factory=DQNTrainConfig)
-    exploration: ExplorationConfig = field(default_factory=ExplorationConfig)
-    eval: EvalConfig = field(default_factory=EvalConfig)
-    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    seed: NonNegativeInt
+    model: ModelConfig
+    train: DQNTrainConfig
+    exploration: ExplorationConfig
+    eval: EvalConfig
+    logging: LoggingConfig
+
+    @model_validator(mode="after")
+    def validate_algorithm_support(self) -> Self:
+        if self.env.observation_normalization is not None:
+            raise ValueError(
+                "env.observation_normalization is not supported for DQN yet; "
+                "replay-buffer samples need raw-observation storage and current-stat "
+                "normalization."
+            )
+        return self
 
 
-@dataclass(frozen=True)
-class A2CConfig:
+class A2CConfig(ConfigModel):
     experiment: ExperimentConfig
     env: EnvConfig
-    seed: int = 123
-    model: ModelConfig = field(default_factory=ModelConfig)
-    train: A2CTrainConfig = field(default_factory=A2CTrainConfig)
-    eval: EvalConfig = field(default_factory=EvalConfig)
-    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    seed: NonNegativeInt
+    model: ModelConfig
+    train: A2CTrainConfig
+    eval: EvalConfig
+    logging: LoggingConfig
 
 
-@dataclass(frozen=True)
-class A3CConfig:
+class A3CConfig(ConfigModel):
     experiment: ExperimentConfig
     env: EnvConfig
-    seed: int = 123
-    model: ModelConfig = field(default_factory=ModelConfig)
-    train: A3CTrainConfig = field(default_factory=A3CTrainConfig)
-    eval: EvalConfig = field(default_factory=EvalConfig)
-    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    seed: NonNegativeInt
+    model: ModelConfig
+    train: A3CTrainConfig
+    eval: EvalConfig
+    logging: LoggingConfig
+
+    @model_validator(mode="after")
+    def validate_algorithm_support(self) -> Self:
+        if self.env.observation_normalization is not None:
+            raise ValueError(
+                "env.observation_normalization is not supported for A3C yet; "
+                "A3C uses per-worker Gym envs instead of the EnvPool VecEnv wrapper."
+            )
+        return self
 
 
-@dataclass(frozen=True)
-class PPOConfig:
+class PPOConfig(ConfigModel):
     experiment: ExperimentConfig
-    env: PPOEnvConfig
-    seed: int = 123
-    model: ModelConfig = field(default_factory=ModelConfig)
-    train: PPOTrainConfig = field(default_factory=PPOTrainConfig)
-    eval: EvalConfig = field(default_factory=EvalConfig)
-    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    env: EnvConfig
+    seed: NonNegativeInt
+    model: ModelConfig
+    train: PPOTrainConfig
+    eval: EvalConfig
+    logging: LoggingConfig
+
+    @model_validator(mode="after")
+    def validate_rollout_batch_size(self) -> Self:
+        rollout_batch_size = self.env.num_envs * self.train.rollout_steps
+        if self.train.minibatch_size > rollout_batch_size:
+            raise ValueError(
+                "train.minibatch_size must be at most "
+                "env.num_envs * train.rollout_steps."
+            )
+        return self
 
 
 type ExperimentRunConfig = DQNConfig | A2CConfig | A3CConfig | PPOConfig
 
 
 def load_config(config_path: Path, overrides: list[str] | None = None) -> DQNConfig:
-    raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    if not isinstance(raw_config, dict):
-        msg = f"Config root must be a mapping: {config_path}"
-        raise ValueError(msg)
-
-    for override in overrides or []:
-        _apply_override(raw_config, override)
-
-    config = _from_dict(DQNConfig, raw_config, path="config")
-    _validate_dqn_config(config)
-    return config
+    return _load_run_config(config_path, DQNConfig, overrides)
 
 
 def load_a2c_config(config_path: Path, overrides: list[str] | None = None) -> A2CConfig:
-    raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    if not isinstance(raw_config, dict):
-        msg = f"Config root must be a mapping: {config_path}"
-        raise ValueError(msg)
-
-    for override in overrides or []:
-        _apply_override(raw_config, override)
-
-    config = _from_dict(A2CConfig, raw_config, path="config")
-    _validate_a2c_config(config)
-    return config
+    return _load_run_config(config_path, A2CConfig, overrides)
 
 
 def load_a3c_config(config_path: Path, overrides: list[str] | None = None) -> A3CConfig:
-    raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    if not isinstance(raw_config, dict):
-        msg = f"Config root must be a mapping: {config_path}"
-        raise ValueError(msg)
-
-    for override in overrides or []:
-        _apply_override(raw_config, override)
-
-    config = _from_dict(A3CConfig, raw_config, path="config")
-    _validate_a3c_config(config)
-    return config
+    return _load_run_config(config_path, A3CConfig, overrides)
 
 
 def load_ppo_config(config_path: Path, overrides: list[str] | None = None) -> PPOConfig:
-    raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    if not isinstance(raw_config, dict):
-        msg = f"Config root must be a mapping: {config_path}"
-        raise ValueError(msg)
-
-    for override in overrides or []:
-        _apply_override(raw_config, override)
-
-    config = _from_dict(PPOConfig, raw_config, path="config")
-    _validate_ppo_config(config)
-    return config
+    return _load_run_config(config_path, PPOConfig, overrides)
 
 
 def save_config(config: ExperimentRunConfig, config_path: Path) -> None:
     config_path.write_text(
-        yaml.safe_dump(asdict(config), sort_keys=False),
+        yaml.safe_dump(
+            config.model_dump(mode="json", exclude_none=True),
+            sort_keys=False,
+        ),
         encoding="utf-8",
     )
 
 
 def config_to_dict(config: ExperimentRunConfig) -> dict[str, Any]:
-    return asdict(config)
+    return config.model_dump(mode="json")
 
 
-def _from_dict(config_type: type[Any], data: Any, path: str) -> Any:
-    if not is_dataclass(config_type):
-        return data
-
-    if not isinstance(data, dict):
-        msg = f"{path} must be a mapping."
+def _load_run_config[ConfigT: ConfigModel](
+    config_path: Path,
+    config_type: type[ConfigT],
+    overrides: list[str] | None,
+) -> ConfigT:
+    raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw_config, dict):
+        msg = f"Config root must be a mapping: {config_path}"
         raise ValueError(msg)
 
-    field_by_name = {field.name: field for field in fields(config_type)}
-    unknown_keys = sorted(set(data) - set(field_by_name))
-    if unknown_keys:
-        keys = ", ".join(unknown_keys)
-        msg = f"Unknown config key(s) at {path}: {keys}"
-        raise ValueError(msg)
+    for override in overrides or []:
+        _apply_override(raw_config, override)
 
-    required_keys = {
-        name
-        for name, field_info in field_by_name.items()
-        if field_info.default is MISSING and field_info.default_factory is MISSING
-    }
-    missing_keys = sorted(required_keys - set(data))
-    if missing_keys:
-        keys = ", ".join(missing_keys)
-        msg = f"Missing config key(s) at {path}: {keys}"
-        raise ValueError(msg)
-
-    kwargs: dict[str, Any] = {}
-    for name, field_info in field_by_name.items():
-        if name not in data:
-            continue
-
-        value = data[name]
-        if is_dataclass(field_info.type):
-            value = _from_dict(field_info.type, value, path=f"{path}.{name}")
-        kwargs[name] = value
-
-    return config_type(**kwargs)
+    return config_type.model_validate(raw_config)
 
 
 def _apply_override(config: dict[str, Any], override: str) -> None:
@@ -284,144 +258,3 @@ def _apply_override(config: dict[str, Any], override: str) -> None:
         cursor = next_cursor
 
     cursor[path[-1]] = yaml.safe_load(raw_value)
-
-
-def _validate_common_config(config: ExperimentRunConfig) -> None:
-    if config.seed < 0:
-        raise ValueError("seed must be non-negative.")
-
-    if hasattr(config.env, "num_envs") and config.env.num_envs <= 0:
-        raise ValueError("env.num_envs must be positive.")
-
-    if config.eval.every_steps <= 0:
-        raise ValueError("eval.every_steps must be positive.")
-    if config.eval.episodes <= 0:
-        raise ValueError("eval.episodes must be positive.")
-    if config.eval.seed < 0:
-        raise ValueError("eval.seed must be non-negative.")
-
-    if config.logging.loss_every_steps <= 0:
-        raise ValueError("logging.loss_every_steps must be positive.")
-
-
-def _validate_model_config(config: ModelConfig) -> None:
-    if not isinstance(config.name, str) or not config.name:
-        raise ValueError("model.name must be a non-empty string.")
-    if not isinstance(config.kwargs, dict):
-        raise ValueError("model.kwargs must be a mapping.")
-    if any(not isinstance(key, str) for key in config.kwargs):
-        raise ValueError("model.kwargs keys must be strings.")
-
-
-def _validate_dqn_config(config: DQNConfig) -> None:
-    _validate_common_config(config)
-    _validate_model_config(config.model)
-
-    if config.train.steps <= 0:
-        raise ValueError("train.steps must be positive.")
-    if config.train.batch_size <= 0:
-        raise ValueError("train.batch_size must be positive.")
-    if config.train.buffer_capacity < config.train.batch_size:
-        raise ValueError("train.buffer_capacity must be at least train.batch_size.")
-    if config.train.learning_starts < 0:
-        raise ValueError("train.learning_starts must be non-negative.")
-    if not 0.0 <= config.train.discount_factor <= 1.0:
-        raise ValueError("train.discount_factor must be in [0, 1].")
-    if config.train.learning_rate <= 0.0:
-        raise ValueError("train.learning_rate must be positive.")
-    if not 0.0 <= config.train.soft_update_rate <= 1.0:
-        raise ValueError("train.soft_update_rate must be in [0, 1].")
-    if config.train.max_grad_norm is not None and config.train.max_grad_norm <= 0.0:
-        raise ValueError("train.max_grad_norm must be positive or null.")
-
-
-def _validate_a2c_config(config: A2CConfig) -> None:
-    _validate_common_config(config)
-    _validate_model_config(config.model)
-
-    if config.train.steps <= 0:
-        raise ValueError("train.steps must be positive.")
-    if config.train.learning_rate <= 0.0:
-        raise ValueError("train.learning_rate must be positive.")
-    if config.train.value_loss_coef < 0.0:
-        raise ValueError("train.value_loss_coef must be non-negative.")
-    if not 0.0 <= config.train.discount_factor <= 1.0:
-        raise ValueError("train.discount_factor must be in [0, 1].")
-    if config.train.rollout_steps <= 0:
-        raise ValueError("train.rollout_steps must be positive.")
-    if config.train.max_grad_norm is not None and config.train.max_grad_norm <= 0.0:
-        raise ValueError("train.max_grad_norm must be positive or null.")
-
-
-def _validate_a3c_config(config: A3CConfig) -> None:
-    _validate_common_config(config)
-    _validate_model_config(config.model)
-
-    if config.train.steps <= 0:
-        raise ValueError("train.steps must be positive.")
-    if config.train.num_workers <= 0:
-        raise ValueError("train.num_workers must be positive.")
-    if config.train.learning_rate <= 0.0:
-        raise ValueError("train.learning_rate must be positive.")
-    if config.train.value_loss_coef < 0.0:
-        raise ValueError("train.value_loss_coef must be non-negative.")
-    if not 0.0 <= config.train.discount_factor <= 1.0:
-        raise ValueError("train.discount_factor must be in [0, 1].")
-    if config.train.rollout_steps <= 0:
-        raise ValueError("train.rollout_steps must be positive.")
-    if config.train.max_grad_norm is not None and config.train.max_grad_norm <= 0.0:
-        raise ValueError("train.max_grad_norm must be positive or null.")
-    if config.train.entropy_coef < 0.0:
-        raise ValueError("train.entropy_coef must be non-negative.")
-    if not 0.0 <= config.train.rmsprop_alpha < 1.0:
-        raise ValueError("train.rmsprop_alpha must be in [0, 1).")
-    if config.train.rmsprop_eps <= 0.0:
-        raise ValueError("train.rmsprop_eps must be positive.")
-
-
-def _validate_ppo_config(config: PPOConfig) -> None:
-    _validate_common_config(config)
-    _validate_model_config(config.model)
-
-    if config.env.kind not in {"vector", "atari"}:
-        raise ValueError("env.kind must be one of: vector, atari.")
-    if config.env.num_envs <= 0:
-        raise ValueError("env.num_envs must be positive.")
-    if config.env.stack_num <= 0:
-        raise ValueError("env.stack_num must be positive.")
-    if config.env.frame_skip <= 0:
-        raise ValueError("env.frame_skip must be positive.")
-    if config.env.noop_max < 0:
-        raise ValueError("env.noop_max must be non-negative.")
-    if config.env.img_height <= 0:
-        raise ValueError("env.img_height must be positive.")
-    if config.env.img_width <= 0:
-        raise ValueError("env.img_width must be positive.")
-
-    if config.train.steps <= 0:
-        raise ValueError("train.steps must be positive.")
-    if config.train.learning_rate <= 0.0:
-        raise ValueError("train.learning_rate must be positive.")
-    if not 0.0 <= config.train.discount_factor <= 1.0:
-        raise ValueError("train.discount_factor must be in [0, 1].")
-    if not 0.0 <= config.train.gae_lambda <= 1.0:
-        raise ValueError("train.gae_lambda must be in [0, 1].")
-    if config.train.rollout_steps <= 0:
-        raise ValueError("train.rollout_steps must be positive.")
-    if config.train.minibatch_size <= 0:
-        raise ValueError("train.minibatch_size must be positive.")
-    rollout_batch_size = config.env.num_envs * config.train.rollout_steps
-    if config.train.minibatch_size > rollout_batch_size:
-        raise ValueError(
-            "train.minibatch_size must be at most env.num_envs * train.rollout_steps."
-        )
-    if config.train.epochs <= 0:
-        raise ValueError("train.epochs must be positive.")
-    if config.train.clip_coef <= 0.0:
-        raise ValueError("train.clip_coef must be positive.")
-    if config.train.value_coef < 0.0:
-        raise ValueError("train.value_coef must be non-negative.")
-    if config.train.entropy_coef < 0.0:
-        raise ValueError("train.entropy_coef must be non-negative.")
-    if config.train.max_grad_norm is not None and config.train.max_grad_norm <= 0.0:
-        raise ValueError("train.max_grad_norm must be positive or null.")
