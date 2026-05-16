@@ -11,18 +11,21 @@ env:
 model:
   name: discrete_mlp
   kwargs:
-    hidden_sizes: [256, 256]
+    hidden_sizes: [64, 64]
+    activation: relu
+    layer_norm: true
+    orthogonal_init: false
 
 train:
-  steps: 120000
-  learning_rate: 0.0005
+  steps: 200000
+  learning_rate: 0.00083
   value_loss_coef: 0.5
-  discount_factor: 0.99
-  rollout_steps: 40
+  discount_factor: 0.995
+  rollout_steps: 5
   max_grad_norm: 0.5
 
 eval:
-  every_steps: 5000
+  every_steps: 10000
   episodes: 10
   seed: 10000
 

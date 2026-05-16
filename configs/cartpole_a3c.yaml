@@ -12,6 +12,9 @@ model:
   name: discrete_mlp
   kwargs:
     hidden_sizes: [128, 128]
+    activation: relu
+    layer_norm: true
+    orthogonal_init: false
 
 train:
   steps: 140000
