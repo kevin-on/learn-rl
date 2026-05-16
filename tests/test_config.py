@@ -27,7 +27,9 @@ def write_config(tmp_path: Path, text: str) -> Path:
 
 
 def a2c_yaml(env_yaml: str, train_yaml: str | None = None) -> str:
-    train = train_yaml or """
+    train = (
+        train_yaml
+        or """
 train:
   steps: 100
   learning_rate: 0.001
@@ -36,6 +38,7 @@ train:
   rollout_steps: 5
   max_grad_norm: 0.5
 """
+    )
     return f"""
 experiment:
   name: test

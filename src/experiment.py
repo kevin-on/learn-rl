@@ -126,6 +126,35 @@ def observation_normalization_stats(env: VecEnv) -> RunningMeanStd | None:
     return None
 
 
+def observation_normalization_state(
+    env: VecEnv,
+) -> dict[str, np.ndarray | float] | None:
+    observation_rms = observation_normalization_stats(env)
+    if observation_rms is None:
+        return None
+
+    return {
+        "mean": np.array(observation_rms.mean, copy=True),
+        "var": np.array(observation_rms.var, copy=True),
+        "count": float(observation_rms.count),
+    }
+
+
+def running_mean_std_from_state(state: dict[str, object]) -> RunningMeanStd:
+    mean = np.asarray(state["mean"], dtype=np.float64)
+    var = np.asarray(state["var"], dtype=np.float64)
+    count = float(state["count"])
+    if mean.shape != var.shape:
+        msg = f"observation normalization mean/var shape mismatch: {mean.shape} != {var.shape}"
+        raise ValueError(msg)
+
+    observation_rms = RunningMeanStd(shape=tuple(int(size) for size in mean.shape))
+    observation_rms.mean = np.array(mean, copy=True)
+    observation_rms.var = np.array(var, copy=True)
+    observation_rms.count = count
+    return observation_rms
+
+
 def save_observation_normalization_stats(env: VecEnv, path: Path) -> Path | None:
     observation_rms = observation_normalization_stats(env)
     if observation_rms is None:

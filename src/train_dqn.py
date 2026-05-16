@@ -4,6 +4,15 @@ from pathlib import Path
 
 import numpy as np
 
+from checkpoints import (
+    apply_resume_overrides,
+    build_checkpoint_payload,
+    checkpoint_paths,
+    config_from_checkpoint,
+    load_checkpoint,
+    resume_checkpoint_path,
+    save_checkpoint,
+)
 from config import DQNConfig, load_config, save_config
 from dqn import DQN, DQNLog
 from experiment import (
@@ -26,8 +35,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=Path,
-        required=True,
         help="Path to a YAML experiment config.",
+    )
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        help="Run directory to resume from. Loads checkpoints/last.pt.",
     )
     parser.add_argument(
         "--run-dir",
@@ -53,7 +66,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip writing the metrics plot after training.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.resume is None and args.config is None:
+        parser.error("--config is required unless --resume is provided.")
+    if args.resume is not None and args.config is not None:
+        parser.error("--config cannot be used with --resume.")
+    if args.resume is not None and args.run_dir is not None:
+        parser.error("--run-dir cannot be used with --resume.")
+    return args
 
 
 def resolve_config(args: argparse.Namespace) -> DQNConfig:
@@ -67,12 +87,40 @@ def resolve_config(args: argparse.Namespace) -> DQNConfig:
 
 def main() -> None:
     args = parse_args()
-    config = resolve_config(args)
-    set_random_seeds(config.seed)
     device = choose_device(args.device)
-    run_dir = create_run_dir(config, args.run_dir)
+    checkpoint = None
+    if args.resume is not None:
+        run_dir = args.resume
+        checkpoint_path = resume_checkpoint_path(run_dir)
+        checkpoint = load_checkpoint(
+            checkpoint_path,
+            map_location=device,
+            expected_algorithm="dqn",
+        )
+        config = config_from_checkpoint(checkpoint)
+        if not isinstance(config, DQNConfig):
+            raise TypeError("Expected DQN config in checkpoint.")
+        config = apply_resume_overrides(
+            config,
+            overrides=args.overrides,
+            checkpoint_step=int(checkpoint["step"]),
+        )
+        if args.no_plot:
+            config = config.model_copy(
+                update={
+                    "logging": config.logging.model_copy(update={"save_plot": False})
+                }
+            )
+        append_metrics = True
+    else:
+        config = resolve_config(args)
+        run_dir = create_run_dir(config, args.run_dir)
+        save_config(config, run_dir / "config.yaml")
+        append_metrics = False
+
+    set_random_seeds(config.seed)
     metrics_path = run_dir / "metrics.jsonl"
-    save_config(config, run_dir / "config.yaml")
+    last_checkpoint_path, best_checkpoint_path = checkpoint_paths(run_dir)
 
     train_env = make_envpool_env(
         config,
@@ -109,13 +157,45 @@ def main() -> None:
         learning_starts=config.train.learning_starts,
         max_grad_norm=config.train.max_grad_norm,
     )
+    if checkpoint is not None:
+        agent.load_checkpoint_state(checkpoint)
+
+    if config.train.steps <= agent.step:
+        msg = (
+            "train.steps must be larger than the checkpoint step when resuming; "
+            f"got train.steps={config.train.steps}, checkpoint step={agent.step}."
+        )
+        raise ValueError(msg)
 
     recent_returns: deque[float] = deque(maxlen=20)
     next_loss_step = config.logging.loss_every_steps
     next_eval_step = config.eval.every_steps
+    while next_loss_step <= agent.step:
+        next_loss_step += config.logging.loss_every_steps
+    while next_eval_step <= agent.step:
+        next_eval_step += config.eval.every_steps
+    if checkpoint is not None and best_checkpoint_path.exists():
+        best_eval_mean_return = checkpoint.get("best_eval_mean_return")
+        best_step = checkpoint.get("best_step")
+    else:
+        best_eval_mean_return = None
+        best_step = None
+
+    def checkpoint_payload() -> dict:
+        return build_checkpoint_payload(
+            algorithm="dqn",
+            config=config,
+            agent_state=agent.checkpoint_state(),
+            observation_normalization=None,
+            best_eval_mean_return=best_eval_mean_return,
+            best_step=best_step,
+        )
+
+    def save_last_checkpoint() -> None:
+        save_checkpoint(checkpoint_payload(), last_checkpoint_path)
 
     def log_training(agent: DQN, log: DQNLog) -> None:
-        nonlocal next_loss_step, next_eval_step
+        nonlocal best_eval_mean_return, best_step, next_loss_step, next_eval_step
 
         metrics.write(
             step=log.step,
@@ -181,13 +261,21 @@ def main() -> None:
                 f"eval_best_return={eval_best_return:6.1f} "
                 f"epsilon={log.exploration_rate:.3f}"
             )
+            if (
+                best_eval_mean_return is None
+                or eval_mean_return > best_eval_mean_return
+            ):
+                best_eval_mean_return = eval_mean_return
+                best_step = log.step
+                save_checkpoint(checkpoint_payload(), best_checkpoint_path)
+            save_last_checkpoint()
 
     print(
         f"Training {config.env.id} for at least {config.train.steps} DQN env "
         f"steps on {device} with {config.env.num_envs} EnvPool envs. "
         f"Run directory: {run_dir}"
     )
-    with JSONLMetricsLogger(metrics_path) as metrics:
+    with JSONLMetricsLogger(metrics_path, append=append_metrics) as metrics:
         try:
             agent.train(
                 num_steps=config.train.steps,
@@ -195,6 +283,7 @@ def main() -> None:
                 log_fn=log_training,
             )
         finally:
+            save_last_checkpoint()
             train_env.close()
             eval_env.close()
 

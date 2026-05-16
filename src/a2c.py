@@ -1,6 +1,7 @@
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import torch
@@ -78,6 +79,8 @@ class A2C:
         self.discount_factor = discount_factor
         self.rollout_steps = rollout_steps
         self.max_grad_norm = max_grad_norm
+        self.step = 0
+        self.update = 0
         self._episode_returns = np.zeros(self.num_envs, dtype=np.float64)
         self._episode_lengths = np.zeros(self.num_envs, dtype=np.int64)
 
@@ -91,11 +94,9 @@ class A2C:
 
         observation = self.env.reset()
         assert observation.shape == (self.num_envs, *self.env.observation_shape)
-        step = 0
-        update = 0
 
-        while step < num_steps:
-            remaining_steps = num_steps - step
+        while self.step < num_steps:
+            remaining_steps = num_steps - self.step
             rollout_steps = min(
                 self.rollout_steps,
                 max(1, math.ceil(remaining_steps / self.num_envs)),
@@ -106,15 +107,15 @@ class A2C:
             )
             observation = rollout.next_observation
             loss, policy_loss, value_loss, entropy, grad_norm = self._update(rollout)
-            step += rollout.length * self.num_envs
-            update += 1
+            self.step += rollout.length * self.num_envs
+            self.update += 1
 
             if log_fn is not None:
                 log_fn(
                     self,
                     A2CLog(
-                        step=step,
-                        update=update,
+                        step=self.step,
+                        update=self.update,
                         loss=loss,
                         policy_loss=policy_loss,
                         value_loss=value_loss,
@@ -124,6 +125,23 @@ class A2C:
                         episodes=rollout.episodes,
                     ),
                 )
+
+    def checkpoint_state(self) -> dict[str, Any]:
+        return {
+            "step": self.step,
+            "update": self.update,
+            "model_state": self.model.state_dict(),
+            "optimizer_state": self.optimizer.state_dict(),
+            "algorithm_state": {},
+        }
+
+    def load_checkpoint_state(self, state: dict[str, Any]) -> None:
+        self.model.load_state_dict(state["model_state"])
+        self.optimizer.load_state_dict(state["optimizer_state"])
+        self.step = int(state["step"])
+        self.update = int(state["update"])
+        self._episode_returns.fill(0.0)
+        self._episode_lengths.fill(0)
 
     def _collect_rollout(
         self,
