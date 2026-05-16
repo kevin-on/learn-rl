@@ -3,6 +3,7 @@ import random
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import torch
@@ -83,6 +84,7 @@ class DQN:
         self.learning_starts = learning_starts
         self.max_grad_norm = max_grad_norm
         self.replay_buffer: deque[Experience] = deque(maxlen=buffer_capacity)
+        self.step = 0
         self._episode_returns = np.zeros(self.num_envs, dtype=np.float64)
         self._episode_lengths = np.zeros(self.num_envs, dtype=np.int64)
 
@@ -98,10 +100,9 @@ class DQN:
 
         observation = self.env.reset()
         assert observation.shape == (self.num_envs, *self.env.observation_shape)
-        step = 0
 
-        while step < num_steps:
-            exploration_rate = validate_exploration_rate(exploration_rate_fn(step))
+        while self.step < num_steps:
+            exploration_rate = validate_exploration_rate(exploration_rate_fn(self.step))
             action_indices = self._select_actions(observation, exploration_rate)
             env_step = self.env.step(action_indices)
             assert env_step.observation.shape == (
@@ -136,7 +137,7 @@ class DQN:
             loss_value = None
             grad_norm = None
             if (
-                step + self.num_envs > self.learning_starts
+                self.step + self.num_envs > self.learning_starts
                 and len(self.replay_buffer) >= self.batch_size
             ):
                 loss = self._compute_td_loss()
@@ -155,12 +156,12 @@ class DQN:
                     self.soft_update_rate,
                 )
 
-            step += self.num_envs
+            self.step += self.num_envs
             if log_fn is not None:
                 log_fn(
                     self,
                     DQNLog(
-                        step=step,
+                        step=self.step,
                         loss=loss_value,
                         grad_norm=grad_norm,
                         reward_mean=float(np.mean(env_step.reward)),
@@ -169,7 +170,32 @@ class DQN:
                     ),
                 )
             if eval_fn is not None:
-                eval_fn(self, step, exploration_rate)
+                eval_fn(self, self.step, exploration_rate)
+
+    def checkpoint_state(self) -> dict[str, Any]:
+        return {
+            "step": self.step,
+            "update": None,
+            "model_state": self.online_q_net.state_dict(),
+            "optimizer_state": self.optimizer.state_dict(),
+            "algorithm_state": {
+                "target_model_state": self.target_q_net.state_dict(),
+                "replay_buffer": list(self.replay_buffer),
+            },
+        }
+
+    def load_checkpoint_state(self, state: dict[str, Any]) -> None:
+        self.online_q_net.load_state_dict(state["model_state"])
+        self.optimizer.load_state_dict(state["optimizer_state"])
+        algorithm_state = state["algorithm_state"]
+        self.target_q_net.load_state_dict(algorithm_state["target_model_state"])
+        self.replay_buffer = deque(
+            algorithm_state["replay_buffer"],
+            maxlen=self.replay_buffer.maxlen,
+        )
+        self.step = int(state["step"])
+        self._episode_returns.fill(0.0)
+        self._episode_lengths.fill(0)
 
     def _select_actions(
         self, observation: ObservationBatch, exploration_rate: float

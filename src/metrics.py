@@ -5,10 +5,11 @@ from typing import Any, Self
 
 
 class JSONLMetricsLogger:
-    def __init__(self, metrics_path: Path) -> None:
+    def __init__(self, metrics_path: Path, *, append: bool = False) -> None:
         self.path = metrics_path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._file = self.path.open("w", encoding="utf-8")
+        mode = "a" if append else "w"
+        self._file = self.path.open(mode, encoding="utf-8")
 
     def __enter__(self) -> Self:
         return self
