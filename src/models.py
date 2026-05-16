@@ -172,6 +172,99 @@ class ContinuousActorCriticMLP(nn.Module):
         )
 
 
+class DDPGActorCriticMLP(nn.Module):
+    def __init__(
+        self,
+        observation_shape: tuple[int, ...],
+        action_spec: BoxActionSpec,
+        hidden_sizes: list[int],
+    ) -> None:
+        super().__init__()
+        validate_hidden_sizes(hidden_sizes)
+
+        observation_size = math.prod(observation_shape)
+        action_size = math.prod(action_spec.shape)
+        if observation_size <= 0:
+            raise ValueError("observation_size must be positive.")
+        if action_size <= 0:
+            raise ValueError("action_size must be positive.")
+
+        action_low = torch.as_tensor(action_spec.low, dtype=torch.float32)
+        action_high = torch.as_tensor(action_spec.high, dtype=torch.float32)
+        if (
+            action_low.shape != action_spec.shape
+            or action_high.shape != action_spec.shape
+        ):
+            msg = "action bounds must match action_spec.shape."
+            raise ValueError(msg)
+        if not torch.all(torch.isfinite(action_low)) or not torch.all(
+            torch.isfinite(action_high)
+        ):
+            raise ValueError("DDPG requires finite Box action bounds.")
+        if not torch.all(action_low < action_high):
+            raise ValueError("action_spec.low must be less than action_spec.high.")
+
+        self.action_shape = action_spec.shape
+        self.actor = _build_mlp_with_output(
+            input_size=observation_size,
+            hidden_sizes=hidden_sizes,
+            output_size=action_size,
+            output_activation=nn.Tanh(),
+        )
+        self.critic = _build_mlp_with_output(
+            input_size=observation_size + action_size,
+            hidden_sizes=hidden_sizes,
+            output_size=1,
+        )
+        self.register_buffer(
+            "action_scale",
+            (action_high - action_low) / 2.0,
+        )
+        self.register_buffer(
+            "action_bias",
+            (action_high + action_low) / 2.0,
+        )
+
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        return self.act(observations)
+
+    def act(self, observations: torch.Tensor) -> torch.Tensor:
+        observations = observations.to(dtype=torch.float32)
+        observations = rearrange(observations, "batch ... -> batch (...)")
+        normalized_actions = self.actor(observations).reshape(
+            observations.shape[0],
+            *self.action_shape,
+        )
+        return normalized_actions * self.action_scale + self.action_bias
+
+    def q(self, observations: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        observations = observations.to(dtype=torch.float32)
+        actions = actions.to(dtype=torch.float32)
+        observations = rearrange(observations, "batch ... -> batch (...)")
+        actions = rearrange(actions, "batch ... -> batch (...)")
+        return self.critic(torch.cat([observations, actions], dim=1))
+
+
+def _build_mlp_with_output(
+    *,
+    input_size: int,
+    hidden_sizes: list[int],
+    output_size: int,
+    output_activation: nn.Module | None = None,
+) -> nn.Sequential:
+    trunk, trunk_output_size = build_mlp_layers(
+        input_size=input_size,
+        hidden_sizes=hidden_sizes,
+    )
+    layers = [
+        *trunk.children(),
+        nn.Linear(trunk_output_size, output_size),
+    ]
+    if output_activation is not None:
+        layers.append(output_activation)
+    return nn.Sequential(*layers)
+
+
 class ActorCriticCNN(nn.Module):
     def __init__(
         self,
@@ -231,6 +324,11 @@ DISCRETE_ACTOR_CRITIC_FACTORIES: dict[str, ModelFactory] = {
 
 BOX_ACTOR_CRITIC_FACTORIES: dict[str, ModelFactory] = {
     "continuous_mlp": ContinuousActorCriticMLP,
+}
+
+
+DDPG_ACTOR_CRITIC_FACTORIES: dict[str, ModelFactory] = {
+    "ddpg_mlp": DDPGActorCriticMLP,
 }
 
 
@@ -300,4 +398,31 @@ def build_actor_critic_model(
         raise ValueError(msg)
     except TypeError as exc:
         msg = f"Invalid kwargs for actor-critic model {name!r}: {exc}"
+        raise ValueError(msg) from exc
+
+
+def build_ddpg_actor_critic_model(
+    *,
+    name: str,
+    observation_shape: tuple[int, ...],
+    action_spec: ActionSpec,
+    kwargs: Mapping[str, Any],
+) -> nn.Module:
+    if not isinstance(action_spec, BoxActionSpec):
+        raise ValueError("DDPG requires a Box action space.")
+
+    factory = DDPG_ACTOR_CRITIC_FACTORIES.get(name)
+    if factory is None:
+        known_models = ", ".join(sorted(DDPG_ACTOR_CRITIC_FACTORIES))
+        msg = f"Unknown DDPG actor-critic model {name!r}; expected one of: {known_models}."
+        raise ValueError(msg)
+
+    try:
+        return factory(
+            observation_shape=observation_shape,
+            action_spec=action_spec,
+            **dict(kwargs),
+        )
+    except TypeError as exc:
+        msg = f"Invalid kwargs for DDPG actor-critic model {name!r}: {exc}"
         raise ValueError(msg) from exc

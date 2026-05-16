@@ -15,28 +15,38 @@ from checkpoints import (
 from config import (
     A2CConfig,
     A2CTrainConfig,
+    DDPGConfig,
+    DDPGExplorationConfig,
+    DDPGTrainConfig,
     DQNConfig,
+    DQNExplorationConfig,
     DQNTrainConfig,
     EnvConfig,
     EvalConfig,
     ExperimentConfig,
-    ExplorationConfig,
     LoggingConfig,
     ModelConfig,
     PPOConfig,
     PPOTrainConfig,
     save_config,
 )
+from ddpg import DDPG
 from dqn import DQN
 from envs import EnvPoolVecEnv
 from evaluate_checkpoint import (
     evaluate_actor_critic_checkpoint,
+    evaluate_ddpg_checkpoint,
     evaluate_dqn_checkpoint,
 )
 from metrics import JSONLMetricsLogger
-from models import build_actor_critic_model, build_q_model
+from models import (
+    build_actor_critic_model,
+    build_ddpg_actor_critic_model,
+    build_q_model,
+)
 from ppo import PPO
 from train_a2c import main as train_a2c_main
+from train_ddpg import main as train_ddpg_main
 from train_dqn import main as train_dqn_main
 from train_ppo import main as train_ppo_main
 
@@ -56,12 +66,34 @@ def tiny_dqn_config(run_root: str = "runs") -> DQNConfig:
             discount_factor=0.99,
             soft_update_rate=0.005,
             max_grad_norm=1.0,
+            exploration=DQNExplorationConfig(
+                schedule="constant",
+                start=1.0,
+                end=1.0,
+                decay_steps=1,
+            ),
         ),
-        exploration=ExplorationConfig(
-            schedule="constant",
-            start=1.0,
-            end=1.0,
-            decay_steps=1,
+        eval=EvalConfig(every_steps=2, episodes=1, seed=10000),
+        logging=LoggingConfig(loss_every_steps=2),
+    )
+
+
+def tiny_ddpg_config(run_root: str = "runs") -> DDPGConfig:
+    return DDPGConfig(
+        experiment=ExperimentConfig(name="test", run_root=run_root),
+        seed=123,
+        env=EnvConfig(id="Pendulum-v1", num_envs=2),
+        model=ModelConfig(name="ddpg_mlp", kwargs={"hidden_sizes": [8, 8]}),
+        train=DDPGTrainConfig(
+            steps=4,
+            batch_size=4,
+            buffer_capacity=16,
+            actor_learning_rate=0.001,
+            critic_learning_rate=0.001,
+            critic_weight_decay=0.0,
+            discount_factor=0.99,
+            soft_update_rate=0.005,
+            exploration=DDPGExplorationConfig(),
         ),
         eval=EvalConfig(every_steps=2, episodes=1, seed=10000),
         logging=LoggingConfig(loss_every_steps=2),
@@ -210,6 +242,58 @@ def test_dqn_checkpoint_state_restores_replay_buffer() -> None:
         assert len(restored_agent.replay_buffer) == len(agent.replay_buffer)
         for name, value in agent.target_q_net.state_dict().items():
             assert torch.equal(restored_agent.target_q_net.state_dict()[name], value)
+    finally:
+        env.close()
+        restored_env.close()
+
+
+def test_ddpg_checkpoint_state_restores_replay_buffer_and_targets() -> None:
+    env = EnvPoolVecEnv(env_id="Pendulum-v1", num_envs=2, seed=1)
+    restored_env = EnvPoolVecEnv(env_id="Pendulum-v1", num_envs=2, seed=2)
+    try:
+        model = build_ddpg_actor_critic_model(
+            name="ddpg_mlp",
+            observation_shape=env.observation_shape,
+            action_spec=env.action_spec,
+            kwargs={"hidden_sizes": [8, 8]},
+        )
+        agent = DDPG(
+            env,
+            model,
+            actor_learning_rate=1e-3,
+            critic_learning_rate=1e-3,
+            critic_weight_decay=0.0,
+            discount_factor=0.99,
+            soft_update_rate=0.005,
+            buffer_capacity=16,
+            batch_size=4,
+        )
+        agent.train(num_steps=4)
+
+        restored_model = build_ddpg_actor_critic_model(
+            name="ddpg_mlp",
+            observation_shape=restored_env.observation_shape,
+            action_spec=restored_env.action_spec,
+            kwargs={"hidden_sizes": [8, 8]},
+        )
+        restored_agent = DDPG(
+            restored_env,
+            restored_model,
+            actor_learning_rate=1e-3,
+            critic_learning_rate=1e-3,
+            critic_weight_decay=0.0,
+            discount_factor=0.99,
+            soft_update_rate=0.005,
+            buffer_capacity=16,
+            batch_size=4,
+        )
+        restored_agent.load_checkpoint_state(agent.checkpoint_state())
+
+        assert restored_agent.step == agent.step
+        assert restored_agent.update == agent.update
+        assert len(restored_agent.replay_buffer) == len(agent.replay_buffer)
+        for name, value in agent.target_model.state_dict().items():
+            assert torch.equal(restored_agent.target_model.state_dict()[name], value)
     finally:
         env.close()
         restored_env.close()
@@ -372,6 +456,60 @@ def test_dqn_train_saves_last_best_and_resume_appends(
     checkpoint = load_checkpoint(last_path, expected_algorithm="dqn")
     assert resumed_line_count > initial_line_count
     assert checkpoint["step"] >= 8
+
+
+def test_ddpg_train_saves_last_best_and_resume_appends(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = tiny_ddpg_config(run_root=str(tmp_path / "runs"))
+    config_path = tmp_path / "ddpg_config.yaml"
+    run_dir = tmp_path / "ddpg_run"
+
+    save_config(config, config_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train_ddpg.py",
+            "--config",
+            str(config_path),
+            "--run-dir",
+            str(run_dir),
+            "--no-plot",
+        ],
+    )
+    train_ddpg_main()
+
+    last_path = run_dir / "checkpoints" / "last.pt"
+    best_path = run_dir / "checkpoints" / "best.pt"
+    assert last_path.exists()
+    assert best_path.exists()
+    initial_line_count = len(
+        (run_dir / "metrics.jsonl").read_text(encoding="utf-8").splitlines()
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train_ddpg.py",
+            "--resume",
+            str(run_dir),
+            "--set",
+            "train.steps=8",
+            "--no-plot",
+        ],
+    )
+    train_ddpg_main()
+
+    resumed_line_count = len(
+        (run_dir / "metrics.jsonl").read_text(encoding="utf-8").splitlines()
+    )
+    checkpoint = load_checkpoint(last_path, expected_algorithm="ddpg")
+    assert resumed_line_count > initial_line_count
+    assert checkpoint["step"] >= 8
+    assert checkpoint["update"] >= 2
 
 
 def test_dqn_train_does_not_write_best_checkpoint_before_first_eval(
@@ -809,8 +947,10 @@ def test_resumed_training_matches_uninterrupted_result(
 
 def test_evaluate_checkpoint_helpers_return_episode_returns() -> None:
     dqn_config = tiny_dqn_config()
+    ddpg_config = tiny_ddpg_config()
     a2c_config = tiny_a2c_config()
     dqn_env = EnvPoolVecEnv(env_id=dqn_config.env.id, num_envs=1, seed=1)
+    ddpg_env = EnvPoolVecEnv(env_id=ddpg_config.env.id, num_envs=2, seed=2)
     a2c_env = EnvPoolVecEnv(env_id=a2c_config.env.id, num_envs=2, seed=2)
     try:
         dqn_model = build_q_model(
@@ -835,6 +975,33 @@ def test_evaluate_checkpoint_helpers_return_episode_returns() -> None:
             algorithm="dqn",
             config=dqn_config,
             agent_state=dqn_agent.checkpoint_state(),
+            observation_normalization=None,
+            best_eval_mean_return=None,
+            best_step=None,
+        )
+
+        ddpg_model = build_ddpg_actor_critic_model(
+            name=ddpg_config.model.name,
+            observation_shape=ddpg_env.observation_shape,
+            action_spec=ddpg_env.action_spec,
+            kwargs=ddpg_config.model.kwargs,
+        )
+        ddpg_agent = DDPG(
+            ddpg_env,
+            ddpg_model,
+            actor_learning_rate=1e-3,
+            critic_learning_rate=1e-3,
+            critic_weight_decay=0.0,
+            discount_factor=0.99,
+            soft_update_rate=0.005,
+            buffer_capacity=16,
+            batch_size=4,
+        )
+        ddpg_agent.train(num_steps=4)
+        ddpg_checkpoint = build_checkpoint_payload(
+            algorithm="ddpg",
+            config=ddpg_config,
+            agent_state=ddpg_agent.checkpoint_state(),
             observation_normalization=None,
             best_eval_mean_return=None,
             best_step=None,
@@ -879,6 +1046,18 @@ def test_evaluate_checkpoint_helpers_return_episode_returns() -> None:
         )
         assert (
             len(
+                evaluate_ddpg_checkpoint(
+                    checkpoint=ddpg_checkpoint,
+                    config=ddpg_config,
+                    episodes=1,
+                    seed=102,
+                    device=torch.device("cpu"),
+                )
+            )
+            == 1
+        )
+        assert (
+            len(
                 evaluate_actor_critic_checkpoint(
                     checkpoint=a2c_checkpoint,
                     config=a2c_config,
@@ -891,4 +1070,5 @@ def test_evaluate_checkpoint_helpers_return_episode_returns() -> None:
         )
     finally:
         dqn_env.close()
+        ddpg_env.close()
         a2c_env.close()

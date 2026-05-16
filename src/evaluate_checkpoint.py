@@ -4,21 +4,26 @@ from pathlib import Path
 import numpy as np
 
 from checkpoints import config_from_checkpoint, load_checkpoint
-from config import A2CConfig, DQNConfig, PPOConfig
+from config import A2CConfig, DDPGConfig, DQNConfig, PPOConfig
 from experiment import (
     choose_device,
     evaluate_actor_critic_policy,
+    evaluate_ddpg_policy,
     evaluate_q_policy,
     make_envpool_env,
     running_mean_std_from_state,
     set_random_seeds,
 )
-from models import build_actor_critic_model, build_q_model
+from models import (
+    build_actor_critic_model,
+    build_ddpg_actor_critic_model,
+    build_q_model,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate a DQN, A2C, or PPO checkpoint."
+        description="Evaluate a DQN, DDPG, A2C, or PPO checkpoint."
     )
     parser.add_argument("checkpoint", type=Path, help="Path to a .pt checkpoint file.")
     parser.add_argument(
@@ -57,6 +62,14 @@ def main() -> None:
 
     if isinstance(config, DQNConfig):
         returns = evaluate_dqn_checkpoint(
+            checkpoint=checkpoint,
+            config=config,
+            episodes=episodes,
+            seed=seed,
+            device=device,
+        )
+    elif isinstance(config, DDPGConfig):
+        returns = evaluate_ddpg_checkpoint(
             checkpoint=checkpoint,
             config=config,
             episodes=episodes,
@@ -112,6 +125,37 @@ def evaluate_dqn_checkpoint(
         q_net.load_state_dict(checkpoint["model_state"])
         return evaluate_q_policy(
             q_net=q_net,
+            env=env,
+            num_episodes=episodes,
+        )
+    finally:
+        env.close()
+
+
+def evaluate_ddpg_checkpoint(
+    *,
+    checkpoint: dict,
+    config: DDPGConfig,
+    episodes: int,
+    seed: int,
+    device,
+) -> list[float]:
+    env = make_envpool_env(
+        config,
+        num_envs=1,
+        seed=seed,
+        evaluation=True,
+    )
+    try:
+        model = build_ddpg_actor_critic_model(
+            name=config.model.name,
+            observation_shape=env.observation_shape,
+            action_spec=env.action_spec,
+            kwargs=config.model.kwargs,
+        ).to(device)
+        model.load_state_dict(checkpoint["model_state"])
+        return evaluate_ddpg_policy(
+            model=model,
             env=env,
             num_episodes=episodes,
         )

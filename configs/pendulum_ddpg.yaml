@@ -1,0 +1,36 @@
+experiment:
+  name: pendulum_ddpg
+  run_root: runs
+
+seed: 123
+
+env:
+  id: Pendulum-v1
+  num_envs: 4
+
+model:
+  name: ddpg_mlp
+  kwargs:
+    hidden_sizes: [256, 256]
+
+train:
+  steps: 200000
+  batch_size: 64
+  buffer_capacity: 1000000
+  actor_learning_rate: 0.0001
+  critic_learning_rate: 0.001
+  critic_weight_decay: 0.01
+  discount_factor: 0.99
+  soft_update_rate: 0.001
+  exploration:
+    theta: 0.15
+    sigma: 0.2
+
+eval:
+  every_steps: 5000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 1000
+  save_plot: true

@@ -94,6 +94,8 @@ def _plot_loss(ax: Any, records: list[dict[str, Any]]) -> None:
     loss_steps, losses = _series(records, "loss")
     policy_loss_steps, policy_losses = _series(records, "policy_loss")
     value_loss_steps, value_losses = _series(records, "value_loss")
+    actor_loss_steps, actor_losses = _series(records, "actor_loss")
+    critic_loss_steps, critic_losses = _series(records, "critic_loss")
     if loss_steps:
         ax.plot(loss_steps, losses, color="#54a24b", linewidth=1.0, label="loss")
     if policy_loss_steps:
@@ -113,6 +115,24 @@ def _plot_loss(ax: Any, records: list[dict[str, Any]]) -> None:
             alpha=0.8,
             linewidth=1.0,
             label="value loss",
+        )
+    if actor_loss_steps:
+        ax.plot(
+            actor_loss_steps,
+            actor_losses,
+            color="#4c78a8",
+            alpha=0.8,
+            linewidth=1.0,
+            label="actor loss",
+        )
+    if critic_loss_steps:
+        ax.plot(
+            critic_loss_steps,
+            critic_losses,
+            color="#f58518",
+            alpha=0.8,
+            linewidth=1.0,
+            label="critic loss",
         )
     _finish_axis(ax, ylabel="loss")
 

@@ -241,3 +241,39 @@ def evaluate_actor_critic_policy(
     if was_training:
         model.train()
     return episode_returns
+
+
+@torch.no_grad()
+def evaluate_ddpg_policy(
+    *,
+    model: torch.nn.Module,
+    env: VecEnv,
+    num_episodes: int,
+) -> list[float]:
+    if env.num_envs != 1:
+        raise ValueError("evaluation env must use num_envs=1.")
+    if not callable(getattr(model, "act", None)):
+        raise TypeError("DDPG model must expose an act() method.")
+
+    was_training = model.training
+    model.eval()
+    device = next(model.parameters()).device
+    episode_returns: list[float] = []
+
+    for _episode_index in range(num_episodes):
+        observation = env.reset()
+        done = False
+        episode_return = 0.0
+        while not done:
+            observation_tensor = torch.as_tensor(observation, device=device)
+            action = model.act(observation_tensor)
+            step = env.step(action.cpu().numpy())
+            observation = step.observation
+            episode_return += float(step.reward[0])
+            done = bool(step.terminated[0] or step.truncated[0])
+
+        episode_returns.append(episode_return)
+
+    if was_training:
+        model.train()
+    return episode_returns

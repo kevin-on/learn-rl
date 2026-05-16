@@ -14,24 +14,23 @@ from checkpoints import (
     save_checkpoint,
     step_checkpoint_path,
 )
-from config import DQNConfig, load_config, save_config
-from dqn import DQN, DQNLog
+from config import DDPGConfig, load_ddpg_config, save_config
+from ddpg import DDPG, DDPGLog
 from experiment import (
     choose_device,
     create_run_dir,
-    evaluate_q_policy,
+    evaluate_ddpg_policy,
     make_envpool_env,
     set_random_seeds,
 )
 from metrics import JSONLMetricsLogger
-from models import build_q_model
+from models import build_ddpg_actor_critic_model
 from plot_metrics import plot_metrics
-from schedules import ExplorationRateSchedule
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train DQN on an EnvPool discrete-action task."
+        description="Train DDPG on an EnvPool continuous-action task."
     )
     parser.add_argument(
         "--config",
@@ -84,8 +83,8 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def resolve_config(args: argparse.Namespace) -> DQNConfig:
-    config = load_config(args.config, overrides=args.overrides)
+def resolve_config(args: argparse.Namespace) -> DDPGConfig:
+    config = load_ddpg_config(args.config, overrides=args.overrides)
     if args.no_plot:
         config = config.model_copy(
             update={"logging": config.logging.model_copy(update={"save_plot": False})}
@@ -111,11 +110,11 @@ def main() -> None:
         checkpoint = load_checkpoint(
             checkpoint_path,
             map_location=device,
-            expected_algorithm="dqn",
+            expected_algorithm="ddpg",
         )
         config = config_from_checkpoint(checkpoint)
-        if not isinstance(config, DQNConfig):
-            raise TypeError("Expected DQN config in checkpoint.")
+        if not isinstance(config, DDPGConfig):
+            raise TypeError("Expected DDPG config in checkpoint.")
         config = apply_resume_overrides(
             config,
             overrides=args.overrides,
@@ -158,28 +157,24 @@ def main() -> None:
         evaluation=True,
     )
 
-    exploration_schedule = ExplorationRateSchedule(
-        schedule=config.train.exploration.schedule,
-        start=config.train.exploration.start,
-        end=config.train.exploration.end,
-        decay_steps=config.train.exploration.decay_steps,
-    )
-    q_net = build_q_model(
+    model = build_ddpg_actor_critic_model(
         name=config.model.name,
         observation_shape=train_env.observation_shape,
-        num_actions=train_env.num_actions,
+        action_spec=train_env.action_spec,
         kwargs=config.model.kwargs,
     ).to(device)
-    agent = DQN(
+    agent = DDPG(
         train_env,
-        q_net,
-        learning_rate=config.train.learning_rate,
+        model,
+        actor_learning_rate=config.train.actor_learning_rate,
+        critic_learning_rate=config.train.critic_learning_rate,
+        critic_weight_decay=config.train.critic_weight_decay,
         discount_factor=config.train.discount_factor,
         soft_update_rate=config.train.soft_update_rate,
         buffer_capacity=config.train.buffer_capacity,
         batch_size=config.train.batch_size,
-        learning_starts=config.train.learning_starts,
-        max_grad_norm=config.train.max_grad_norm,
+        ou_theta=config.train.exploration.theta,
+        ou_sigma=config.train.exploration.sigma,
     )
     if checkpoint is not None:
         agent.load_checkpoint_state(checkpoint)
@@ -213,7 +208,7 @@ def main() -> None:
 
     def checkpoint_payload() -> dict:
         return build_checkpoint_payload(
-            algorithm="dqn",
+            algorithm="ddpg",
             config=config,
             agent_state=agent.checkpoint_state(),
             observation_normalization=None,
@@ -227,26 +222,29 @@ def main() -> None:
     def save_periodic_checkpoint(log_step: int) -> None:
         save_checkpoint(checkpoint_payload(), step_checkpoint_path(run_dir, log_step))
 
-    def log_training(agent: DQN, log: DQNLog) -> None:
+    def log_training(agent: DDPG, log: DDPGLog) -> None:
         nonlocal best_eval_mean_return, best_step, next_checkpoint_step
         nonlocal next_loss_step, next_eval_step
 
+        stats = log.stats
         metrics.write(
             step=log.step,
-            loss=log.loss,
-            grad_norm=log.grad_norm,
-            epsilon=log.exploration_rate,
+            update=log.update,
+            actor_loss=None if stats is None else stats.actor_loss,
+            critic_loss=None if stats is None else stats.critic_loss,
+            q_mean=None if stats is None else stats.q_mean,
+            target_q_mean=None if stats is None else stats.target_q_mean,
         )
 
-        if log.loss is not None and log.step >= next_loss_step:
+        if stats is not None and log.step >= next_loss_step:
             while next_loss_step <= log.step:
                 next_loss_step += config.logging.loss_every_steps
-            grad_norm_text = (
-                "" if log.grad_norm is None else f" grad_norm={log.grad_norm:.4f}"
-            )
             print(
-                f"step={log.step:6d} loss={log.loss:.4f}{grad_norm_text} "
-                f"epsilon={log.exploration_rate:.3f}"
+                f"step={log.step:6d} "
+                f"actor_loss={stats.actor_loss:.4f} "
+                f"critic_loss={stats.critic_loss:.4f} "
+                f"q_mean={stats.q_mean:.4f} "
+                f"target_q_mean={stats.target_q_mean:.4f}"
             )
 
         for episode in log.episodes:
@@ -264,16 +262,15 @@ def main() -> None:
                 f"env={episode.env_id:3d} "
                 f"train_return={episode.episode_return:6.1f} "
                 f"mean20_return={mean_return:6.1f} "
-                f"episode_length={episode.episode_length:4d} "
-                f"epsilon={log.exploration_rate:.3f}"
+                f"episode_length={episode.episode_length:4d}"
             )
 
         if log.step >= next_eval_step:
             while next_eval_step <= log.step:
                 next_eval_step += config.eval.every_steps
 
-            returns = evaluate_q_policy(
-                q_net=agent.online_q_net,
+            returns = evaluate_ddpg_policy(
+                model=agent.online_model,
                 env=eval_env,
                 num_episodes=config.eval.episodes,
             )
@@ -282,7 +279,6 @@ def main() -> None:
             eval_best_return = float(np.max(returns))
             metrics.write(
                 step=log.step,
-                epsilon=log.exploration_rate,
                 eval_seed=config.eval.seed,
                 eval_mean_return=eval_mean_return,
                 eval_std_return=eval_std_return,
@@ -292,8 +288,7 @@ def main() -> None:
                 f"step={log.step:6d} "
                 f"eval_mean_return={eval_mean_return:6.1f} "
                 f"eval_std_return={eval_std_return:6.1f} "
-                f"eval_best_return={eval_best_return:6.1f} "
-                f"epsilon={log.exploration_rate:.3f}"
+                f"eval_best_return={eval_best_return:6.1f}"
             )
             if (
                 best_eval_mean_return is None
@@ -310,7 +305,7 @@ def main() -> None:
                 next_checkpoint_step += checkpoint_every_steps
 
     print(
-        f"Training {config.env.id} for at least {config.train.steps} DQN env "
+        f"Training {config.env.id} for at least {config.train.steps} DDPG env "
         f"steps on {device} with {config.env.num_envs} EnvPool envs. "
         f"Run directory: {run_dir}"
     )
@@ -318,7 +313,6 @@ def main() -> None:
         try:
             agent.train(
                 num_steps=config.train.steps,
-                exploration_rate_fn=exploration_schedule.value,
                 log_fn=log_training,
             )
         finally:
@@ -328,7 +322,7 @@ def main() -> None:
 
     if config.logging.save_plot:
         plot_path = run_dir / "metrics.png"
-        plot_metrics(metrics_path, plot_path, title=f"{config.env.id} DQN")
+        plot_metrics(metrics_path, plot_path, title=f"{config.env.id} DDPG")
         print(f"Saved metrics plot to {plot_path}")
 
 

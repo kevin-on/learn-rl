@@ -22,12 +22,11 @@ train:
   discount_factor: 1.0
   soft_update_rate: 0.005
   max_grad_norm: 10.0
-
-exploration:
-  schedule: linear
-  start: 1.0
-  end: 0.0
-  decay_steps: 75000
+  exploration:
+    schedule: linear
+    start: 1.0
+    end: 0.0
+    decay_steps: 75000
 
 eval:
   every_steps: 5000

@@ -1,7 +1,12 @@
+import pytest
 import torch
 
 from envs import BoxActionSpec, DiscreteActionSpec
-from models import build_actor_critic_model, build_q_model
+from models import (
+    build_actor_critic_model,
+    build_ddpg_actor_critic_model,
+    build_q_model,
+)
 from policies import CategoricalPolicyDistribution, DiagGaussianPolicyDistribution
 
 
@@ -62,6 +67,73 @@ def test_continuous_actor_critic_mlp_output_shapes() -> None:
     assert hasattr(model, "policy_trunk")
     assert hasattr(model, "value_trunk")
     assert not hasattr(model, "trunk")
+
+
+def test_ddpg_actor_critic_mlp_output_shapes_and_bounds() -> None:
+    action_spec = BoxActionSpec(
+        shape=(2,),
+        low=torch.tensor([-2.0, -1.0]).numpy(),
+        high=torch.tensor([2.0, 3.0]).numpy(),
+        dtype=torch.full((2,), 0.0).numpy().dtype,
+    )
+    model = build_ddpg_actor_critic_model(
+        name="ddpg_mlp",
+        observation_shape=(3,),
+        action_spec=action_spec,
+        kwargs={"hidden_sizes": [8, 8]},
+    )
+
+    observations = torch.zeros(4, 3)
+    actions = model.act(observations)
+    q_values = model.q(observations, actions)
+
+    assert actions.shape == (4, 2)
+    assert torch.all(actions >= torch.tensor([-2.0, -1.0]))
+    assert torch.all(actions <= torch.tensor([2.0, 3.0]))
+    assert q_values.shape == (4, 1)
+    assert hasattr(model, "actor")
+    assert hasattr(model, "critic")
+    assert isinstance(model.actor[0], torch.nn.Linear)
+    assert model.actor[0].in_features == 3
+    assert isinstance(model.actor[-1], torch.nn.Tanh)
+    assert isinstance(model.critic[0], torch.nn.Linear)
+    assert model.critic[0].in_features == 5
+    assert not hasattr(model, "state_layer")
+    assert not hasattr(model, "post_action_trunk")
+
+
+def test_ddpg_actor_critic_mlp_rejects_empty_hidden_sizes() -> None:
+    action_spec = BoxActionSpec(
+        shape=(1,),
+        low=torch.tensor([-1.0]).numpy(),
+        high=torch.tensor([1.0]).numpy(),
+        dtype=torch.full((1,), 0.0).numpy().dtype,
+    )
+
+    with pytest.raises(ValueError, match="hidden_sizes must not be empty"):
+        build_ddpg_actor_critic_model(
+            name="ddpg_mlp",
+            observation_shape=(3,),
+            action_spec=action_spec,
+            kwargs={"hidden_sizes": []},
+        )
+
+
+def test_ddpg_actor_critic_mlp_requires_hidden_sizes() -> None:
+    action_spec = BoxActionSpec(
+        shape=(1,),
+        low=torch.tensor([-1.0]).numpy(),
+        high=torch.tensor([1.0]).numpy(),
+        dtype=torch.full((1,), 0.0).numpy().dtype,
+    )
+
+    with pytest.raises(ValueError, match="Invalid kwargs"):
+        build_ddpg_actor_critic_model(
+            name="ddpg_mlp",
+            observation_shape=(3,),
+            action_spec=action_spec,
+            kwargs={},
+        )
 
 
 def test_atari_cnn_remains_shared() -> None:

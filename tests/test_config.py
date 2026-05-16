@@ -15,6 +15,7 @@ from config import (
     load_a2c_config,
     load_a3c_config,
     load_config,
+    load_ddpg_config,
     load_ppo_config,
     save_config,
 )
@@ -85,12 +86,45 @@ train:
   discount_factor: 0.99
   soft_update_rate: 0.005
   max_grad_norm: 10.0
+  exploration:
+    schedule: linear
+    start: 1.0
+    end: 0.05
+    decay_steps: 100
 
-exploration:
-  schedule: linear
-  start: 1.0
-  end: 0.05
-  decay_steps: 100
+eval:
+  every_steps: 50
+  episodes: 1
+  seed: 10000
+
+logging:
+  loss_every_steps: 10
+"""
+
+
+def ddpg_yaml(env_yaml: str) -> str:
+    return f"""
+experiment:
+  name: test
+  run_root: runs
+
+seed: 123
+
+{env_yaml}
+
+model:
+  name: ddpg_mlp
+
+train:
+  steps: 100
+  batch_size: 32
+  buffer_capacity: 100
+  actor_learning_rate: 0.0001
+  critic_learning_rate: 0.001
+  critic_weight_decay: 0.01
+  discount_factor: 0.99
+  soft_update_rate: 0.001
+  exploration: {{}}
 
 eval:
   every_steps: 50
@@ -514,6 +548,45 @@ env:
 
     with pytest.raises(ValueError, match="not supported for DQN"):
         load_config(path)
+
+
+def test_load_ddpg_config_parses_defaults(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        ddpg_yaml(
+            """
+env:
+  id: Pendulum-v1
+  num_envs: 4
+"""
+        ),
+    )
+
+    config = load_ddpg_config(path)
+
+    assert config.env.id == "Pendulum-v1"
+    assert config.model.name == "ddpg_mlp"
+    assert config.train.actor_learning_rate == 0.0001
+    assert config.train.critic_learning_rate == 0.001
+    assert config.train.exploration.theta == 0.15
+    assert config.train.exploration.sigma == 0.2
+
+
+def test_ddpg_rejects_observation_normalization(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        ddpg_yaml(
+            """
+env:
+  id: Pendulum-v1
+  num_envs: 1
+  observation_normalization: {}
+"""
+        ),
+    )
+
+    with pytest.raises(ValueError, match="not supported for DDPG"):
+        load_ddpg_config(path)
 
 
 def test_a3c_rejects_observation_normalization(tmp_path: Path) -> None:

@@ -48,6 +48,18 @@ class ModelConfig(ConfigModel):
     kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
+class DQNExplorationConfig(ConfigModel):
+    schedule: str = Field(min_length=1)
+    start: NonNegativeFloat
+    end: NonNegativeFloat
+    decay_steps: PositiveInt
+
+
+class DDPGExplorationConfig(ConfigModel):
+    theta: PositiveFloat = 0.15
+    sigma: NonNegativeFloat = 0.2
+
+
 class DQNTrainConfig(ConfigModel):
     steps: PositiveInt
     batch_size: PositiveInt
@@ -57,6 +69,25 @@ class DQNTrainConfig(ConfigModel):
     discount_factor: Probability
     soft_update_rate: Probability
     max_grad_norm: PositiveFloat | None
+    exploration: DQNExplorationConfig
+
+    @model_validator(mode="after")
+    def validate_capacity(self) -> Self:
+        if self.buffer_capacity < self.batch_size:
+            raise ValueError("train.buffer_capacity must be at least train.batch_size.")
+        return self
+
+
+class DDPGTrainConfig(ConfigModel):
+    steps: PositiveInt
+    batch_size: PositiveInt
+    buffer_capacity: PositiveInt
+    actor_learning_rate: PositiveFloat
+    critic_learning_rate: PositiveFloat
+    critic_weight_decay: NonNegativeFloat = 0.0
+    discount_factor: Probability
+    soft_update_rate: Probability
+    exploration: DDPGExplorationConfig
 
     @model_validator(mode="after")
     def validate_capacity(self) -> Self:
@@ -101,13 +132,6 @@ class PPOTrainConfig(ConfigModel):
     max_grad_norm: PositiveFloat | None
 
 
-class ExplorationConfig(ConfigModel):
-    schedule: str = Field(min_length=1)
-    start: NonNegativeFloat
-    end: NonNegativeFloat
-    decay_steps: PositiveInt
-
-
 class EvalConfig(ConfigModel):
     every_steps: PositiveInt
     episodes: PositiveInt
@@ -129,7 +153,6 @@ class DQNConfig(ConfigModel):
     seed: NonNegativeInt
     model: ModelConfig
     train: DQNTrainConfig
-    exploration: ExplorationConfig
     eval: EvalConfig
     logging: LoggingConfig
     checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
@@ -139,6 +162,27 @@ class DQNConfig(ConfigModel):
         if self.env.observation_normalization is not None:
             raise ValueError(
                 "env.observation_normalization is not supported for DQN yet; "
+                "replay-buffer samples need raw-observation storage and current-stat "
+                "normalization."
+            )
+        return self
+
+
+class DDPGConfig(ConfigModel):
+    experiment: ExperimentConfig
+    env: EnvConfig
+    seed: NonNegativeInt
+    model: ModelConfig
+    train: DDPGTrainConfig
+    eval: EvalConfig
+    logging: LoggingConfig
+    checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
+
+    @model_validator(mode="after")
+    def validate_algorithm_support(self) -> Self:
+        if self.env.observation_normalization is not None:
+            raise ValueError(
+                "env.observation_normalization is not supported for DDPG yet; "
                 "replay-buffer samples need raw-observation storage and current-stat "
                 "normalization."
             )
@@ -197,11 +241,17 @@ class PPOConfig(ConfigModel):
         return self
 
 
-type ExperimentRunConfig = DQNConfig | A2CConfig | A3CConfig | PPOConfig
+type ExperimentRunConfig = DQNConfig | DDPGConfig | A2CConfig | A3CConfig | PPOConfig
 
 
 def load_config(config_path: Path, overrides: list[str] | None = None) -> DQNConfig:
     return _load_run_config(config_path, DQNConfig, overrides)
+
+
+def load_ddpg_config(
+    config_path: Path, overrides: list[str] | None = None
+) -> DDPGConfig:
+    return _load_run_config(config_path, DDPGConfig, overrides)
 
 
 def load_a2c_config(config_path: Path, overrides: list[str] | None = None) -> A2CConfig:
