@@ -10,6 +10,7 @@ from checkpoints import (
     load_checkpoint,
     resume_checkpoint_path,
     save_checkpoint,
+    step_checkpoint_path,
 )
 from config import (
     A2CConfig,
@@ -562,6 +563,140 @@ def test_ppo_train_saves_last_best_and_resume_appends(
     assert resumed_line_count > initial_line_count
     assert checkpoint["step"] >= 8
     assert checkpoint["update"] >= 2
+
+
+@pytest.mark.parametrize("algorithm", ["dqn", "a2c", "ppo"])
+def test_train_saves_periodic_checkpoints_on_new_and_resumed_runs(
+    algorithm: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_factory = {
+        "dqn": tiny_dqn_config,
+        "a2c": tiny_a2c_config,
+        "ppo": tiny_ppo_config,
+    }[algorithm]
+    train_main = {
+        "dqn": train_dqn_main,
+        "a2c": train_a2c_main,
+        "ppo": train_ppo_main,
+    }[algorithm]
+    config = config_factory(str(tmp_path / "runs"))
+    config_path = tmp_path / f"{algorithm}_config.yaml"
+    run_dir = tmp_path / f"{algorithm}_run"
+
+    save_config(config, config_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            f"train_{algorithm}.py",
+            "--config",
+            str(config_path),
+            "--run-dir",
+            str(run_dir),
+            "--checkpoint-every-steps",
+            "4",
+            "--no-plot",
+        ],
+    )
+    train_main()
+
+    step_4_path = step_checkpoint_path(run_dir, 4)
+    step_4_checkpoint = load_checkpoint(step_4_path, expected_algorithm=algorithm)
+    assert step_4_checkpoint["step"] == 4
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            f"train_{algorithm}.py",
+            "--resume",
+            str(run_dir),
+            "--set",
+            "train.steps=8",
+            "--checkpoint-every-steps",
+            "4",
+            "--no-plot",
+        ],
+    )
+    train_main()
+
+    step_8_path = step_checkpoint_path(run_dir, 8)
+    step_8_checkpoint = load_checkpoint(step_8_path, expected_algorithm=algorithm)
+    assert step_8_checkpoint["step"] == 8
+
+
+def test_train_uses_checkpoint_every_steps_from_config(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = tiny_dqn_config(str(tmp_path / "runs"))
+    config = config.model_copy(
+        update={
+            "checkpoint": config.checkpoint.model_copy(update={"every_steps": 4}),
+        }
+    )
+    config_path = tmp_path / "config.yaml"
+    run_dir = tmp_path / "run"
+
+    save_config(config, config_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train_dqn.py",
+            "--config",
+            str(config_path),
+            "--run-dir",
+            str(run_dir),
+            "--no-plot",
+        ],
+    )
+    train_dqn_main()
+
+    checkpoint = load_checkpoint(step_checkpoint_path(run_dir, 4))
+    saved_config = checkpoint["config"]
+    assert checkpoint["step"] == 4
+    assert saved_config["checkpoint"]["every_steps"] == 4
+
+
+def test_cli_checkpoint_every_steps_overrides_config(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = tiny_dqn_config(str(tmp_path / "runs"))
+    config = config.model_copy(
+        update={
+            "train": config.train.model_copy(update={"steps": 6}),
+            "checkpoint": config.checkpoint.model_copy(update={"every_steps": 5}),
+        }
+    )
+    config_path = tmp_path / "config.yaml"
+    run_dir = tmp_path / "run"
+
+    save_config(config, config_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train_dqn.py",
+            "--config",
+            str(config_path),
+            "--run-dir",
+            str(run_dir),
+            "--checkpoint-every-steps",
+            "4",
+            "--no-plot",
+        ],
+    )
+    train_dqn_main()
+
+    checkpoint = load_checkpoint(step_checkpoint_path(run_dir, 4))
+    saved_config = checkpoint["config"]
+    assert checkpoint["step"] == 4
+    assert saved_config["checkpoint"]["every_steps"] == 4
+    assert not step_checkpoint_path(run_dir, 5).exists()
 
 
 @pytest.mark.parametrize("algorithm", ["dqn", "a2c", "ppo"])

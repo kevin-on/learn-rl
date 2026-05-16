@@ -32,6 +32,8 @@ Each run writes:
 - `checkpoints/last.pt`: the latest resumable DQN/A2C/PPO checkpoint
 - `checkpoints/best.pt`: the best DQN/A2C/PPO checkpoint by evaluation mean return
   after at least one evaluation has run
+- `checkpoints/step_<step>.pt`: optional DQN/A2C/PPO periodic checkpoints when
+  `checkpoint.every_steps` is set
 
 By default outputs go under `runs/`, which is git-ignored.
 
@@ -41,6 +43,19 @@ DQN, A2C, and PPO resume from a run directory by loading `checkpoints/last.pt`:
 
 ```sh
 uv run python src/train_dqn.py --resume runs/<run-name> --set train.steps=20000
+```
+
+Save additional periodic checkpoints every K environment steps:
+
+```yaml
+checkpoint:
+  every_steps: 50000
+```
+
+The CLI flag can override that value for a specific run:
+
+```sh
+uv run python src/train_dqn.py --config configs/cartpole_dqn.yaml --checkpoint-every-steps 50000
 ```
 
 Evaluate a saved DQN/A2C/PPO checkpoint:

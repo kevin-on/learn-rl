@@ -241,6 +241,28 @@ env:
     assert config.env.atari is None
     assert config.env.observation_normalization is None
     assert config.model.kwargs == {}
+    assert config.checkpoint.every_steps is None
+
+
+def test_load_a2c_config_parses_checkpoint_config(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        a2c_yaml(
+            """
+env:
+  id: CartPole-v1
+  num_envs: 8
+"""
+        )
+        + """
+checkpoint:
+  every_steps: 50
+""",
+    )
+
+    config = load_a2c_config(path)
+
+    assert config.checkpoint.every_steps == 50
     assert config.logging.save_plot is True
 
 

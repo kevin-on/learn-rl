@@ -12,6 +12,7 @@ from checkpoints import (
     load_checkpoint,
     resume_checkpoint_path,
     save_checkpoint,
+    step_checkpoint_path,
 )
 from config import PPOConfig, load_ppo_config, save_config
 from experiment import (
@@ -69,6 +70,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip writing the metrics plot after training.",
     )
+    parser.add_argument(
+        "--checkpoint-every-steps",
+        type=int,
+        help="Also save checkpoints/step_<step>.pt every K environment steps.",
+    )
     args = parser.parse_args()
     if args.resume is None and args.config is None:
         parser.error("--config is required unless --resume is provided.")
@@ -76,6 +82,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--config cannot be used with --resume.")
     if args.resume is not None and args.run_dir is not None:
         parser.error("--run-dir cannot be used with --resume.")
+    if args.checkpoint_every_steps is not None and args.checkpoint_every_steps <= 0:
+        parser.error("--checkpoint-every-steps must be positive.")
     return args
 
 
@@ -84,6 +92,14 @@ def resolve_config(args: argparse.Namespace) -> PPOConfig:
     if args.no_plot:
         config = config.model_copy(
             update={"logging": config.logging.model_copy(update={"save_plot": False})}
+        )
+    if args.checkpoint_every_steps is not None:
+        config = config.model_copy(
+            update={
+                "checkpoint": config.checkpoint.model_copy(
+                    update={"every_steps": args.checkpoint_every_steps}
+                )
+            }
         )
     return config
 
@@ -112,6 +128,14 @@ def main() -> None:
             config = config.model_copy(
                 update={
                     "logging": config.logging.model_copy(update={"save_plot": False})
+                }
+            )
+        if args.checkpoint_every_steps is not None:
+            config = config.model_copy(
+                update={
+                    "checkpoint": config.checkpoint.model_copy(
+                        update={"every_steps": args.checkpoint_every_steps}
+                    )
                 }
             )
         append_metrics = True
@@ -182,6 +206,12 @@ def main() -> None:
         next_loss_step += config.logging.loss_every_steps
     while next_eval_step <= agent.step:
         next_eval_step += config.eval.every_steps
+    checkpoint_every_steps = config.checkpoint.every_steps
+    next_checkpoint_step = (
+        None
+        if checkpoint_every_steps is None
+        else ((agent.step // checkpoint_every_steps) + 1) * checkpoint_every_steps
+    )
     if checkpoint is not None and best_checkpoint_path.exists():
         best_eval_mean_return = checkpoint.get("best_eval_mean_return")
         best_step = checkpoint.get("best_step")
@@ -202,8 +232,12 @@ def main() -> None:
     def save_last_checkpoint() -> None:
         save_checkpoint(checkpoint_payload(), last_checkpoint_path)
 
+    def save_periodic_checkpoint(log_step: int) -> None:
+        save_checkpoint(checkpoint_payload(), step_checkpoint_path(run_dir, log_step))
+
     def log_training(_agent: PPO, log: PPOLog) -> None:
-        nonlocal best_eval_mean_return, best_step, next_loss_step, next_eval_step
+        nonlocal best_eval_mean_return, best_step, next_checkpoint_step
+        nonlocal next_loss_step, next_eval_step
 
         record = {
             "step": log.step,
@@ -287,6 +321,11 @@ def main() -> None:
                 best_step = log.step
                 save_checkpoint(checkpoint_payload(), best_checkpoint_path)
             save_last_checkpoint()
+
+        if next_checkpoint_step is not None and log.step >= next_checkpoint_step:
+            save_periodic_checkpoint(log.step)
+            while next_checkpoint_step <= log.step:
+                next_checkpoint_step += checkpoint_every_steps
 
     print(
         f"Training {config.env.id} for at least {config.train.steps} environment "

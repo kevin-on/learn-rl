@@ -41,6 +41,12 @@ def checkpoint_paths(run_dir: Path) -> tuple[Path, Path]:
     return checkpoint_dir / "last.pt", checkpoint_dir / "best.pt"
 
 
+def step_checkpoint_path(run_dir: Path, step: int) -> Path:
+    if step < 0:
+        raise ValueError("checkpoint step must be non-negative.")
+    return run_dir / "checkpoints" / f"step_{step:012d}.pt"
+
+
 def resume_checkpoint_path(run_dir: Path) -> Path:
     if not run_dir.is_dir():
         msg = f"--resume must point to a run directory: {run_dir}"

@@ -119,6 +119,10 @@ class LoggingConfig(ConfigModel):
     save_plot: bool = True
 
 
+class CheckpointConfig(ConfigModel):
+    every_steps: PositiveInt | None = None
+
+
 class DQNConfig(ConfigModel):
     experiment: ExperimentConfig
     env: EnvConfig
@@ -128,6 +132,7 @@ class DQNConfig(ConfigModel):
     exploration: ExplorationConfig
     eval: EvalConfig
     logging: LoggingConfig
+    checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
 
     @model_validator(mode="after")
     def validate_algorithm_support(self) -> Self:
@@ -148,6 +153,7 @@ class A2CConfig(ConfigModel):
     train: A2CTrainConfig
     eval: EvalConfig
     logging: LoggingConfig
+    checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
 
 
 class A3CConfig(ConfigModel):
@@ -158,6 +164,7 @@ class A3CConfig(ConfigModel):
     train: A3CTrainConfig
     eval: EvalConfig
     logging: LoggingConfig
+    checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
 
     @model_validator(mode="after")
     def validate_algorithm_support(self) -> Self:
@@ -177,6 +184,7 @@ class PPOConfig(ConfigModel):
     train: PPOTrainConfig
     eval: EvalConfig
     logging: LoggingConfig
+    checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
 
     @model_validator(mode="after")
     def validate_rollout_batch_size(self) -> Self:
