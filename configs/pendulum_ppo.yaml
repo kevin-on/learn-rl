@@ -6,23 +6,26 @@ seed: 123
 
 env:
   id: Pendulum-v1
-  num_envs: 8
+  num_envs: 4
 
 model:
   name: continuous_mlp
   kwargs:
     hidden_sizes: [64, 64]
+    activation: relu
+    layer_norm: true
+    orthogonal_init: false
     init_log_std: 0.0
     log_std_min: -20.0
     log_std_max: 2.0
 
 train:
-  steps: 200000
-  learning_rate: 0.0003
-  discount_factor: 0.99
+  steps: 100000
+  learning_rate: 0.001
+  discount_factor: 0.9
   gae_lambda: 0.95
-  rollout_steps: 128
-  minibatch_size: 256
+  rollout_steps: 1024
+  minibatch_size: 64
   epochs: 10
   clip_coef: 0.2
   value_coef: 0.5

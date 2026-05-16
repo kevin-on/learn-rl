@@ -1,31 +1,34 @@
 experiment:
-  name: mountain_car_a2c
+  name: mountain_car_continuous_a2c
   run_root: runs
 
 seed: 123
 
 env:
-  id: MountainCar-v0
-  num_envs: 16
+  id: MountainCarContinuous-v0
+  num_envs: 4
 
 model:
-  name: discrete_mlp
+  name: continuous_mlp
   kwargs:
     hidden_sizes: [64, 64]
     activation: relu
     layer_norm: true
     orthogonal_init: false
+    init_log_std: 0.0
+    log_std_min: -20.0
+    log_std_max: 2.0
 
 train:
-  steps: 1000000
+  steps: 100000
   learning_rate: 0.0007
   value_loss_coef: 0.5
   discount_factor: 0.99
-  rollout_steps: 5
+  rollout_steps: 100
   max_grad_norm: 0.5
 
 eval:
-  every_steps: 10000
+  every_steps: 5000
   episodes: 10
   seed: 10000
 

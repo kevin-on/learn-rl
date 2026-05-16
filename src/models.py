@@ -9,6 +9,10 @@ from torch import nn
 from envs import ActionSpec, BoxActionSpec, DiscreteActionSpec
 from policies import CategoricalPolicyDistribution, DiagGaussianPolicyDistribution
 
+ORTHOGONAL_HIDDEN_GAIN = math.sqrt(2.0)
+ORTHOGONAL_POLICY_HEAD_GAIN = 0.01
+ORTHOGONAL_VALUE_HEAD_GAIN = 1.0
+
 
 def validate_hidden_sizes(hidden_sizes: list[int]) -> None:
     if not hidden_sizes:
@@ -22,6 +26,7 @@ def build_mlp_layers(
     input_size: int,
     hidden_sizes: list[int],
     activation: str = "relu",
+    layer_norm: bool = False,
 ) -> tuple[nn.Sequential, int]:
     if input_size <= 0:
         raise ValueError("input_size must be positive.")
@@ -30,12 +35,10 @@ def build_mlp_layers(
     layers: list[nn.Module] = []
     layer_input_size = input_size
     for hidden_size in hidden_sizes:
-        layers.extend(
-            [
-                nn.Linear(layer_input_size, hidden_size),
-                _activation_layer(activation),
-            ]
-        )
+        layers.append(nn.Linear(layer_input_size, hidden_size))
+        if layer_norm:
+            layers.append(nn.LayerNorm(hidden_size))
+        layers.append(_activation_layer(activation))
         layer_input_size = hidden_size
     return nn.Sequential(*layers), layer_input_size
 
@@ -56,6 +59,9 @@ class QNetwork(nn.Module):
         observation_shape: tuple[int, ...],
         num_actions: int,
         hidden_sizes: list[int],
+        activation: str = "relu",
+        layer_norm: bool = False,
+        orthogonal_init: bool = False,
     ) -> None:
         super().__init__()
         observation_size = math.prod(observation_shape)
@@ -67,8 +73,13 @@ class QNetwork(nn.Module):
         self.trunk, trunk_output_size = build_mlp_layers(
             input_size=observation_size,
             hidden_sizes=hidden_sizes,
+            activation=activation,
+            layer_norm=layer_norm,
         )
         self.q_head = nn.Linear(trunk_output_size, num_actions)
+        if orthogonal_init:
+            _orthogonal_init_trunk(self.trunk)
+            _orthogonal_init_linear(self.q_head, gain=ORTHOGONAL_VALUE_HEAD_GAIN)
 
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         observations = observations.to(dtype=torch.float32)
@@ -82,6 +93,9 @@ class DiscreteActorCriticMLP(nn.Module):
         observation_shape: tuple[int, ...],
         num_actions: int,
         hidden_sizes: list[int],
+        activation: str = "relu",
+        layer_norm: bool = False,
+        orthogonal_init: bool = False,
     ) -> None:
         super().__init__()
         observation_size = math.prod(observation_shape)
@@ -93,13 +107,28 @@ class DiscreteActorCriticMLP(nn.Module):
         self.policy_trunk, policy_output_size = build_mlp_layers(
             input_size=observation_size,
             hidden_sizes=hidden_sizes,
+            activation=activation,
+            layer_norm=layer_norm,
         )
         self.value_trunk, value_output_size = build_mlp_layers(
             input_size=observation_size,
             hidden_sizes=hidden_sizes,
+            activation=activation,
+            layer_norm=layer_norm,
         )
         self.policy_head = nn.Linear(policy_output_size, num_actions)
         self.value_head = nn.Linear(value_output_size, 1)
+        if orthogonal_init:
+            _orthogonal_init_trunk(self.policy_trunk)
+            _orthogonal_init_trunk(self.value_trunk)
+            _orthogonal_init_linear(
+                self.policy_head,
+                gain=ORTHOGONAL_POLICY_HEAD_GAIN,
+            )
+            _orthogonal_init_linear(
+                self.value_head,
+                gain=ORTHOGONAL_VALUE_HEAD_GAIN,
+            )
 
     def forward(
         self, observations: torch.Tensor
@@ -122,6 +151,9 @@ class ContinuousActorCriticMLP(nn.Module):
         init_log_std: float = 0.0,
         log_std_min: float = -20.0,
         log_std_max: float = 2.0,
+        activation: str = "tanh",
+        layer_norm: bool = False,
+        orthogonal_init: bool = False,
     ) -> None:
         super().__init__()
         observation_size = math.prod(observation_shape)
@@ -137,16 +169,29 @@ class ContinuousActorCriticMLP(nn.Module):
         self.policy_trunk, policy_output_size = build_mlp_layers(
             input_size=observation_size,
             hidden_sizes=hidden_sizes,
-            activation="tanh",
+            activation=activation,
+            layer_norm=layer_norm,
         )
         self.value_trunk, value_output_size = build_mlp_layers(
             input_size=observation_size,
             hidden_sizes=hidden_sizes,
-            activation="tanh",
+            activation=activation,
+            layer_norm=layer_norm,
         )
         self.mean_head = nn.Linear(policy_output_size, action_size)
         self.log_std = nn.Parameter(torch.full((action_size,), float(init_log_std)))
         self.value_head = nn.Linear(value_output_size, 1)
+        if orthogonal_init:
+            _orthogonal_init_trunk(self.policy_trunk)
+            _orthogonal_init_trunk(self.value_trunk)
+            _orthogonal_init_linear(
+                self.mean_head,
+                gain=ORTHOGONAL_POLICY_HEAD_GAIN,
+            )
+            _orthogonal_init_linear(
+                self.value_head,
+                gain=ORTHOGONAL_VALUE_HEAD_GAIN,
+            )
 
     def forward(
         self, observations: torch.Tensor
@@ -216,6 +261,17 @@ class ActorCriticCNN(nn.Module):
 
 
 type ModelFactory = type[nn.Module]
+
+
+def _orthogonal_init_trunk(trunk: nn.Module) -> None:
+    for module in trunk.modules():
+        if isinstance(module, nn.Linear):
+            _orthogonal_init_linear(module, gain=ORTHOGONAL_HIDDEN_GAIN)
+
+
+def _orthogonal_init_linear(module: nn.Linear, *, gain: float) -> None:
+    nn.init.orthogonal_(module.weight, gain=gain)
+    nn.init.constant_(module.bias, 0.0)
 
 
 Q_MODEL_FACTORIES: dict[str, ModelFactory] = {

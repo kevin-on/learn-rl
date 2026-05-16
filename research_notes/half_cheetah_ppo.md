@@ -7,9 +7,10 @@ Date: 2026-05-14
 All runs used `src/train_ppo.py`, CPU execution, seed `123`, `HalfCheetah-v5`,
 10 evaluation episodes, and config-only changes. The main search compared the
 repo default, PPO settings inspired by common HalfCheetah references, a
-log-std/parallel-env variant, and rollout-step ablations. No source-level
-techniques such as normalization, schedules, or architecture changes beyond the
-YAML-exposed MLP size were added.
+log-std/parallel-env variant, and rollout-step ablations. It did not use
+source-level techniques such as normalization, schedules, or architecture
+changes beyond the YAML-exposed MLP size. A follow-up observation-normalization
+ablation is reported below.
 
 ## Best Config
 
@@ -48,6 +49,23 @@ The simplified coefficients improved the best 1M result by about `+410` eval
 return over the previous best single-seed run. The higher entropy coefficient
 (`0.004`) did not hurt this run, but this is still a single-seed result.
 
+## Observation Normalization Ablation
+
+A follow-up run used the same saved config with
+`--set env.observation_normalization={}`. The run directory is
+`runs/half_cheetah_ppo_obs_norm_1m_seed123`.
+
+| Run | Steps | Best eval mean | Final eval mean | Best single eval episode | Wall time |
+|---|---:|---:|---:|---:|---:|
+| no observation normalization | 1M | 4501.2 +/- 57.7 | 4501.2 +/- 57.7 | not recorded | 11:17.60 |
+| observation normalization | 1M | 4410.0 +/- 24.8 | 4037.6 +/- 1263.7 | 4514.3 | 12:10.54 |
+
+Observation normalization did not improve this tuned HalfCheetah PPO config. It
+nearly matched the no-normalization best mean late in training, but the final
+evaluation became highly variable. The best single final episode was competitive
+with the no-normalization mean, but the mean result was worse and less stable.
+For this config, keep observation normalization disabled by default.
+
 ## Rollout Ablation
 
 Using the same best config family, longer 5M runs showed that `rollout_steps=128`
@@ -76,3 +94,7 @@ this implementation.
 ### 5M Rollout Ablation
 
 ![5M rollout ablation](half_cheetah_ppo_assets/rollout_ablation_5m.png)
+
+### Observation Normalization Ablation
+
+![Observation normalization ablation](half_cheetah_ppo_assets/obs_norm_ablation.png)

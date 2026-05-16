@@ -12,10 +12,13 @@ model:
   name: discrete_mlp
   kwargs:
     hidden_sizes: [64, 64]
+    activation: relu
+    layer_norm: true
+    orthogonal_init: false
 
 train:
   steps: 100000
-  learning_rate: 0.0005
+  learning_rate: 0.001
   discount_factor: 0.98
   gae_lambda: 0.8
   rollout_steps: 32
