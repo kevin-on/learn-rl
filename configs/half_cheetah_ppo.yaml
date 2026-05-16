@@ -7,6 +7,7 @@ seed: 123
 env:
   id: HalfCheetah-v5
   num_envs: 16
+  observation_normalization: {}
 
 model:
   name: continuous_mlp
@@ -26,8 +27,9 @@ train:
   epochs: 20
   clip_coef: 0.1
   value_coef: 0.6
-  entropy_coef: 0.004
+  entropy_coef: 0.0004
   max_grad_norm: 0.8
+  normalize_advantages: true
 
 eval:
   every_steps: 25000

@@ -1,15 +1,16 @@
 # HalfCheetah PPO Report
 
-Date: 2026-05-14
+Date: 2026-05-14; updated 2026-05-17
 
 ## Setup
 
 All runs used `src/train_ppo.py`, CPU execution, seed `123`, `HalfCheetah-v5`,
 10 evaluation episodes, and config-only changes. The main search compared the
 repo default, PPO settings inspired by common HalfCheetah references, a
-log-std/parallel-env variant, and rollout-step ablations. No source-level
-techniques such as normalization, schedules, or architecture changes beyond the
-YAML-exposed MLP size were added.
+log-std/parallel-env variant, and rollout-step ablations. The first pass did not
+use normalization. The follow-up study added configurable advantage
+normalization and enabled observation normalization through the existing
+environment wrapper path.
 
 ## Best Config
 
@@ -18,6 +19,7 @@ Saved as `configs/half_cheetah_ppo.yaml`.
 | Parameter | Value |
 |---|---:|
 | num envs | 16 |
+| observation normalization | enabled, clip=10, epsilon=1e-8 |
 | hidden sizes | [256, 256] |
 | init log std | -2.0 |
 | training steps | 1000000 |
@@ -29,24 +31,68 @@ Saved as `configs/half_cheetah_ppo.yaml`.
 | PPO epochs | 20 |
 | clip coef | 0.1 |
 | value coef | 0.6 |
-| entropy coef | 0.004 |
+| entropy coef | 0.0004 |
 | max grad norm | 0.8 |
+| normalize advantages | true |
 
 ## Result
 
-The current best 1M-step run is
-`runs/20260514-135607-383284-half_cheetah_ppo_simplified_1m-seed123`.
+The current best 1M-step default run is
+`runs/half_cheetah_ppo_advnorm_obsnorm_entropy0004_value06_1m_seed123`.
 
-| Run | Steps | Best eval return | Final eval return | Wall time |
-|---|---:|---:|---:|---:|
-| current simplified config | 1M | 4501.2 +/- 57.7 | 4501.2 +/- 57.7 | 11:17.60 |
-| previous best rounded-search config | 1M | 4091.0 +/- 45.0 | 4091.0 +/- 45.0 | 11:44 |
-| SB3-like no-normalization reference | 1M | 3717.8 +/- 110.4 | 3521.1 +/- 938.6 | 15:07 |
-| repo starting config | 1M | 1555.5 +/- 43.2 | 1498.9 +/- 63.6 | 4:20 |
+| Run | Steps | Best eval return | Final eval return |
+|---|---:|---:|---:|
+| adv norm + obs norm, entropy=0.0004, value=0.6 | 1M | 5645.4 +/- 63.6 | 5645.4 +/- 63.6 |
+| adv norm + obs norm, entropy=0.0004, value=0.58096 | 1M | 5757.1 +/- 54.9 | 5204.2 +/- 1830.8 |
+| adv norm + obs norm, entropy=0.0, value=0.58096 | 801k | 5053.6 +/- 49.2 | 4966.7 +/- 320.1 |
+| no adv norm, no obs norm, entropy=0.004, value=0.6 | 1M | 4501.2 +/- 57.7 | 4501.2 +/- 57.7 |
+| adv norm only, entropy=0.0004 | 1M | 4160.4 +/- 128.0 | 4160.4 +/- 128.0 |
+| adv norm only, entropy=0.004 | 1M | 4040.5 +/- 146.5 | 3997.6 +/- 105.0 |
+| adv norm only, entropy=0.0015 | 1M | 3747.0 +/- 29.4 | 3314.6 +/- 1037.6 |
 
-The simplified coefficients improved the best 1M result by about `+410` eval
-return over the previous best single-seed run. The higher entropy coefficient
-(`0.004`) did not hurt this run, but this is still a single-seed result.
+The simplified advantage-normalized default improved the final 1M return by
+about `+1144` over the previous no-normalization baseline in this single-seed
+comparison. The exact `value_coef=0.58096` run reached the highest intermediate
+evaluation, but its final evaluation had very high variance. Rounding the value
+coefficient to `0.6` gave a slightly lower peak and a much cleaner final result,
+so it is the better default.
+
+## Advantage Normalization Study
+
+Advantage normalization alone was not enough. With the old unnormalized
+observation stream, turning on `train.normalize_advantages` made the actor update
+scale consistent, but the critic still saw large and spiky targets. The raw
+advantage standard deviation and scaled value loss stayed volatile late in
+training, and the advantage-normalized runs underperformed the old baseline.
+
+Lowering entropy pressure helped because normalized advantages make the policy
+loss live on a smaller, more stable scale. Keeping `entropy_coef=0.004` made the
+entropy term relatively too influential, while `0.0004` reduced that pressure
+without fully removing exploration. A zero-entropy partial run learned well but
+trailed the `0.0004` setting, so the default keeps a small entropy bonus.
+
+Observation normalization was the decisive change. Once observations were
+normalized, the critic targets and raw advantages became less erratic, and the
+advantage-normalized actor update could outperform the original no-normalization
+config. The main practical takeaway is that advantage normalization should be
+tuned with the value and observation scale, not treated as an isolated switch.
+
+## Essential PPO Metric
+
+The temporary advantage diagnostics were useful during the ablation, but they are
+too noisy for steady-state training logs. Keep only the standard PPO policy-move
+diagnostic added during this work:
+
+| Metric | Keep because |
+|---|---|
+| `approx_kl` | Tracks policy-update size directly and catches overly aggressive normalized updates. |
+
+The debug-only advantage fields can be removed from normal metrics: raw
+advantage mean, abs mean, min, max, effective advantage mean, effective advantage
+standard deviation, effective advantage abs mean, scaled value loss, and entropy
+loss magnitude. Under `normalize_advantages=true`, the effective advantage mean
+and standard deviation are mostly expected by construction, so they are good
+implementation checks but poor long-term training signals.
 
 ## Rollout Ablation
 
@@ -65,9 +111,17 @@ this implementation.
 
 ## Plots
 
-### Current Best 1M Run
+### Advantage-Normalization Config Search
 
-![Current best 1M metrics](half_cheetah_ppo_assets/simplified_1m_metrics.png)
+![Advantage-normalization config search](half_cheetah_ppo_assets/advnorm_config_search.png)
+
+### Value Coefficient 0.6 Check
+
+![Advantage normalization value coefficient 0.6 comparison](half_cheetah_ppo_assets/advnorm_value_coef_06.png)
+
+### Previous No-Normalization 1M Run
+
+![Previous no-normalization 1M metrics](half_cheetah_ppo_assets/simplified_1m_metrics.png)
 
 ### 1M Rollout Ablation
 
