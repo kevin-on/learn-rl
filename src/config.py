@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -56,6 +56,7 @@ class DQNExplorationConfig(ConfigModel):
 
 
 class DDPGExplorationConfig(ConfigModel):
+    noise_type: Literal["ornstein-uhlenbeck", "normal"] = "ornstein-uhlenbeck"
     theta: PositiveFloat = 0.15
     sigma: NonNegativeFloat = 0.2
 
@@ -82,6 +83,7 @@ class DDPGTrainConfig(ConfigModel):
     steps: PositiveInt
     batch_size: PositiveInt
     buffer_capacity: PositiveInt
+    learning_starts: NonNegativeInt = 0
     actor_learning_rate: PositiveFloat
     critic_learning_rate: PositiveFloat
     critic_weight_decay: NonNegativeFloat = 0.0

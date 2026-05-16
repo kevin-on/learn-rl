@@ -566,10 +566,39 @@ env:
 
     assert config.env.id == "Pendulum-v1"
     assert config.model.name == "ddpg_mlp"
+    assert config.train.learning_starts == 0
     assert config.train.actor_learning_rate == 0.0001
     assert config.train.critic_learning_rate == 0.001
+    assert config.train.exploration.noise_type == "ornstein-uhlenbeck"
     assert config.train.exploration.theta == 0.15
     assert config.train.exploration.sigma == 0.2
+
+
+def test_load_ddpg_config_accepts_normal_noise(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        ddpg_yaml(
+            """
+env:
+  id: Pendulum-v1
+  num_envs: 4
+"""
+        ).replace(
+            "exploration: {}",
+            """
+  learning_starts: 100
+  exploration:
+    noise_type: normal
+    sigma: 0.1
+""",
+        ),
+    )
+
+    config = load_ddpg_config(path)
+
+    assert config.train.learning_starts == 100
+    assert config.train.exploration.noise_type == "normal"
+    assert config.train.exploration.sigma == 0.1
 
 
 def test_ddpg_rejects_observation_normalization(tmp_path: Path) -> None:

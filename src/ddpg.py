@@ -86,6 +86,37 @@ class OrnsteinUhlenbeckNoise:
         return np.array(self.state, copy=True)
 
 
+class NormalActionNoise:
+    def __init__(self, *, shape: tuple[int, ...], sigma: float) -> None:
+        if any(size <= 0 for size in shape):
+            raise ValueError("shape dimensions must be positive.")
+        if sigma < 0.0:
+            raise ValueError("sigma must be non-negative.")
+
+        self.shape = shape
+        self.sigma = float(sigma)
+
+    def reset(self, indices: np.ndarray | None = None) -> None:
+        pass
+
+    def sample(self) -> np.ndarray:
+        return np.random.normal(scale=self.sigma, size=self.shape).astype(np.float32)
+
+
+def build_ddpg_action_noise(
+    *,
+    noise_type: str,
+    shape: tuple[int, ...],
+    theta: float,
+    sigma: float,
+) -> OrnsteinUhlenbeckNoise | NormalActionNoise:
+    if noise_type == "ornstein-uhlenbeck":
+        return OrnsteinUhlenbeckNoise(shape=shape, theta=theta, sigma=sigma)
+    if noise_type == "normal":
+        return NormalActionNoise(shape=shape, sigma=sigma)
+    raise ValueError("noise_type must be 'ornstein-uhlenbeck' or 'normal'.")
+
+
 class DDPG:
     def __init__(
         self,
@@ -99,6 +130,8 @@ class DDPG:
         soft_update_rate: float,
         buffer_capacity: int,
         batch_size: int,
+        learning_starts: int = 0,
+        noise_type: str = "ornstein-uhlenbeck",
         ou_theta: float = 0.15,
         ou_sigma: float = 0.2,
     ) -> None:
@@ -110,6 +143,7 @@ class DDPG:
             soft_update_rate=soft_update_rate,
             buffer_capacity=buffer_capacity,
             batch_size=batch_size,
+            learning_starts=learning_starts,
         )
         if not isinstance(env.action_spec, BoxActionSpec):
             raise ValueError("DDPG requires a Box action space.")
@@ -139,6 +173,7 @@ class DDPG:
         self.discount_factor = discount_factor
         self.soft_update_rate = soft_update_rate
         self.batch_size = batch_size
+        self.learning_starts = learning_starts
         self.replay_buffer: deque[Experience] = deque(maxlen=buffer_capacity)
         self.step = 0
         self.update = 0
@@ -147,8 +182,10 @@ class DDPG:
         self._action_low = np.asarray(self.action_spec.low, dtype=np.float32)
         self._action_high = np.asarray(self.action_spec.high, dtype=np.float32)
         self._action_scale = (self._action_high - self._action_low) / 2.0
-        self._ou_noise = OrnsteinUhlenbeckNoise(
-            shape=(self.num_envs, *self.action_spec.shape),
+        noise_shape = (self.num_envs, *self.action_spec.shape)
+        self._action_noise = build_ddpg_action_noise(
+            noise_type=noise_type,
+            shape=noise_shape,
             theta=ou_theta,
             sigma=ou_sigma,
         )
@@ -162,7 +199,7 @@ class DDPG:
             raise ValueError("num_steps must be positive.")
 
         observation = self.env.reset()
-        self._ou_noise.reset()
+        self._action_noise.reset()
         assert observation.shape == (self.num_envs, *self.env.observation_shape)
 
         while self.step < num_steps:
@@ -189,7 +226,7 @@ class DDPG:
             episodes = self._record_episodes(env_step.reward, done, env_step.env_id)
             if np.any(done):
                 done_slots = np.flatnonzero(done)
-                self._ou_noise.reset(done_slots)
+                self._action_noise.reset(done_slots)
                 reset_observation = self.env.reset_subset(env_step.env_id[done_slots])
                 assert reset_observation.shape == (
                     len(done_slots),
@@ -199,7 +236,10 @@ class DDPG:
             observation = next_observation
 
             stats = None
-            if len(self.replay_buffer) >= self.batch_size:
+            if (
+                self.step >= self.learning_starts
+                and len(self.replay_buffer) >= self.batch_size
+            ):
                 stats = self._update()
                 self.update += 1
 
@@ -246,16 +286,24 @@ class DDPG:
         self.update = int(state["update"])
         self._episode_returns.fill(0.0)
         self._episode_lengths.fill(0)
-        self._ou_noise.reset()
+        self._action_noise.reset()
 
     @torch.no_grad()
     def _select_actions(
         self,
         observation: ObservationBatch,
     ) -> np.ndarray:
+        if self.step < self.learning_starts:
+            actions = np.random.uniform(
+                low=self._action_low,
+                high=self._action_high,
+                size=(self.num_envs, *self.action_spec.shape),
+            )
+            return actions.astype(self.action_spec.dtype, copy=False)
+
         observation_tensor = torch.as_tensor(observation, device=self.device)
         actions = self.online_model.act(observation_tensor).cpu().numpy()
-        actions = actions + self._ou_noise.sample() * self._action_scale
+        actions = actions + self._action_noise.sample() * self._action_scale
         return np.clip(actions, self._action_low, self._action_high).astype(
             self.action_spec.dtype,
             copy=False,
@@ -351,6 +399,7 @@ def validate_ddpg_hyperparameters(
     soft_update_rate: float,
     buffer_capacity: int,
     batch_size: int,
+    learning_starts: int,
 ) -> None:
     if actor_learning_rate <= 0.0:
         raise ValueError("actor_learning_rate must be positive.")
@@ -364,6 +413,8 @@ def validate_ddpg_hyperparameters(
         raise ValueError("soft_update_rate must be in [0, 1].")
     if batch_size <= 0:
         raise ValueError("batch_size must be positive.")
+    if learning_starts < 0:
+        raise ValueError("learning_starts must be non-negative.")
     if buffer_capacity < batch_size:
         raise ValueError("buffer_capacity must be at least batch_size.")
 

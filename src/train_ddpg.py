@@ -173,6 +173,8 @@ def main() -> None:
         soft_update_rate=config.train.soft_update_rate,
         buffer_capacity=config.train.buffer_capacity,
         batch_size=config.train.batch_size,
+        learning_starts=config.train.learning_starts,
+        noise_type=config.train.exploration.noise_type,
         ou_theta=config.train.exploration.theta,
         ou_sigma=config.train.exploration.sigma,
     )
