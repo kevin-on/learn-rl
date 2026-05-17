@@ -1,0 +1,41 @@
+experiment:
+  name: hopper_ppo
+  run_root: runs
+
+seed: 123
+
+env:
+  id: Hopper-v5
+  num_envs: 1
+  observation_normalization: {}
+
+model:
+  name: continuous_mlp
+  kwargs:
+    hidden_sizes: [256, 256]
+    init_log_std: 0.0
+    log_std_min: -20.0
+    log_std_max: 2.0
+
+train:
+  steps: 1000000
+  learning_rate: 0.0002
+  discount_factor: 0.99
+  gae_lambda: 0.95
+  rollout_steps: 2048
+  minibatch_size: 64
+  epochs: 10
+  clip_coef: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.0
+  max_grad_norm: 0.5
+  normalize_advantages: true
+
+eval:
+  every_steps: 25000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 5000
+  save_plot: true
