@@ -132,6 +132,7 @@ class PPOTrainConfig(ConfigModel):
     value_coef: NonNegativeFloat
     entropy_coef: NonNegativeFloat
     max_grad_norm: PositiveFloat | None
+    normalize_advantages: bool = False
 
 
 class EvalConfig(ConfigModel):

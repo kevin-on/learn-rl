@@ -1,11 +1,11 @@
 experiment:
-  name: mountain_car_a2c
+  name: lunar_lander_ppo
   run_root: runs
 
 seed: 123
 
 env:
-  id: MountainCar-v0
+  id: LunarLander-v3
   num_envs: 16
 
 model:
@@ -18,17 +18,22 @@ model:
 
 train:
   steps: 1000000
-  learning_rate: 0.0007
-  value_loss_coef: 0.5
-  discount_factor: 0.99
-  rollout_steps: 5
+  learning_rate: 0.0003
+  discount_factor: 0.999
+  gae_lambda: 0.98
+  rollout_steps: 1024
+  minibatch_size: 64
+  epochs: 4
+  clip_coef: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.01
   max_grad_norm: 0.5
 
 eval:
-  every_steps: 10000
+  every_steps: 25000
   episodes: 10
   seed: 10000
 
 logging:
-  loss_every_steps: 1000
+  loss_every_steps: 5000
   save_plot: true

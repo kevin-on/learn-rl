@@ -1,12 +1,12 @@
 experiment:
-  name: pendulum_a2c
+  name: lunar_lander_continuous_ppo
   run_root: runs
 
 seed: 123
 
 env:
-  id: Pendulum-v1
-  num_envs: 8
+  id: LunarLanderContinuous-v3
+  num_envs: 16
 
 model:
   name: continuous_mlp
@@ -15,23 +15,28 @@ model:
     activation: relu
     layer_norm: true
     orthogonal_init: false
-    init_log_std: -2.0
+    init_log_std: 0.0
     log_std_min: -20.0
     log_std_max: 2.0
 
 train:
   steps: 1000000
-  learning_rate: 0.0007
-  value_loss_coef: 0.4
-  discount_factor: 0.9
-  rollout_steps: 8
+  learning_rate: 0.0003
+  discount_factor: 0.999
+  gae_lambda: 0.98
+  rollout_steps: 1024
+  minibatch_size: 64
+  epochs: 4
+  clip_coef: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.01
   max_grad_norm: 0.5
 
 eval:
-  every_steps: 20000
+  every_steps: 25000
   episodes: 10
   seed: 10000
 
 logging:
-  loss_every_steps: 1000
+  loss_every_steps: 5000
   save_plot: true

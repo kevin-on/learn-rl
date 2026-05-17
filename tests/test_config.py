@@ -356,6 +356,29 @@ env:
 
     assert isinstance(config.env, EnvConfig)
     assert config.env.atari == atari_config()
+    assert config.train.normalize_advantages is False
+
+
+def test_load_ppo_config_accepts_advantage_normalization_override(
+    tmp_path: Path,
+) -> None:
+    path = write_config(
+        tmp_path,
+        ppo_yaml(
+            """
+env:
+  id: CartPole-v1
+  num_envs: 8
+"""
+        ),
+    )
+
+    config = load_ppo_config(
+        path,
+        overrides=["train.normalize_advantages=true"],
+    )
+
+    assert config.train.normalize_advantages is True
 
 
 def test_load_ppo_config_accepts_nested_atari_override(tmp_path: Path) -> None:

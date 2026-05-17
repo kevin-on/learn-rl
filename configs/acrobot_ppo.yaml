@@ -1,11 +1,11 @@
 experiment:
-  name: mountain_car_a2c
+  name: acrobot_ppo
   run_root: runs
 
 seed: 123
 
 env:
-  id: MountainCar-v0
+  id: Acrobot-v1
   num_envs: 16
 
 model:
@@ -18,10 +18,15 @@ model:
 
 train:
   steps: 1000000
-  learning_rate: 0.0007
-  value_loss_coef: 0.5
+  learning_rate: 0.0003
   discount_factor: 0.99
-  rollout_steps: 5
+  gae_lambda: 0.94
+  rollout_steps: 256
+  minibatch_size: 64
+  epochs: 4
+  clip_coef: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.0
   max_grad_norm: 0.5
 
 eval:

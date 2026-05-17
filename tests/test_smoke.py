@@ -1,3 +1,5 @@
+import torch
+
 from a2c import A2C
 from ddpg import DDPG
 from dqn import DQN
@@ -7,7 +9,20 @@ from models import (
     build_ddpg_actor_critic_model,
     build_q_model,
 )
-from ppo import PPO
+from ppo import PPO, normalize_advantages
+
+
+def test_normalize_advantages_standardizes_batch() -> None:
+    advantages = normalize_advantages(torch.tensor([1.0, 2.0, 3.0, 4.0]))
+
+    assert abs(float(advantages.mean().item())) < 1e-6
+    assert abs(float(advantages.std(unbiased=False).item()) - 1.0) < 1e-6
+
+
+def test_normalize_advantages_handles_constant_batch() -> None:
+    advantages = normalize_advantages(torch.tensor([3.0, 3.0, 3.0]))
+
+    assert advantages.tolist() == [0.0, 0.0, 0.0]
 
 
 def test_dqn_cartpole_tiny_smoke() -> None:
