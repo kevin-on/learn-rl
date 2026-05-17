@@ -188,6 +188,7 @@ def main() -> None:
         value_coef=config.train.value_coef,
         entropy_coef=config.train.entropy_coef,
         max_grad_norm=config.train.max_grad_norm,
+        normalize_advantages=config.train.normalize_advantages,
     )
     if checkpoint is not None:
         agent.load_checkpoint_state(checkpoint)
@@ -249,6 +250,7 @@ def main() -> None:
             "clip_fraction": log.stats.clip_fraction,
             "grad_norm": log.stats.grad_norm,
             "rollout_steps": log.rollout_steps,
+            "approx_kl": log.stats.approx_kl,
         }
         metrics.write(**record)
 
@@ -267,6 +269,7 @@ def main() -> None:
                 f"value_loss={log.stats.value_loss:.4f} "
                 f"entropy={log.stats.entropy:.4f} "
                 f"clip_fraction={log.stats.clip_fraction:.3f}"
+                f" approx_kl={log.stats.approx_kl:.4f}"
                 f"{grad_norm_text}"
             )
 

@@ -29,6 +29,7 @@ class PPOUpdateStats:
     entropy: float
     clip_fraction: float
     grad_norm: float | None
+    approx_kl: float
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,7 @@ class PPO:
         value_coef: float,
         entropy_coef: float,
         max_grad_norm: float | None,
+        normalize_advantages: bool = False,
     ) -> None:
         validate_ppo_hyperparameters(
             learning_rate=learning_rate,
@@ -103,6 +105,7 @@ class PPO:
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
         self.max_grad_norm = max_grad_norm
+        self.normalize_advantages = normalize_advantages
         self.step = 0
         self.update = 0
         self._episode_returns = np.zeros(self.num_envs, dtype=np.float64)
@@ -372,6 +375,7 @@ class PPO:
         total_value_loss = 0.0
         total_entropy = 0.0
         total_clip_fraction = 0.0
+        total_approx_kl = 0.0
         total_seen = 0
         last_grad_norm: float | None = None
         minibatch_size = min(self.minibatch_size, num_transitions)
@@ -389,6 +393,8 @@ class PPO:
                 entropy = dist.entropy().mean()
                 ratio = (new_log_probs - old_log_probs[minibatch_indices]).exp()
                 minibatch_advantages = flat_advantages[minibatch_indices]
+                if self.normalize_advantages:
+                    minibatch_advantages = normalize_advantages(minibatch_advantages)
                 unclipped_loss = ratio * minibatch_advantages
                 clipped_loss = (
                     torch.clamp(ratio, 1.0 - self.clip_coef, 1.0 + self.clip_coef)
@@ -415,12 +421,15 @@ class PPO:
                         .to(dtype=torch.float32)
                         .mean()
                     )
+                    log_ratio = new_log_probs - old_log_probs[minibatch_indices]
+                    approx_kl = (ratio - 1.0) - log_ratio
                     seen = len(minibatch_indices)
                     total_loss += float(loss.item()) * seen
                     total_policy_loss += float(policy_loss.item()) * seen
                     total_value_loss += float(value_loss.item()) * seen
                     total_entropy += float(entropy.item()) * seen
                     total_clip_fraction += float(clip_fraction.item()) * seen
+                    total_approx_kl += float(approx_kl.mean().item()) * seen
                     total_seen += seen
 
         if total_seen == 0:
@@ -433,7 +442,18 @@ class PPO:
             entropy=total_entropy / total_seen,
             clip_fraction=total_clip_fraction / total_seen,
             grad_norm=last_grad_norm,
+            approx_kl=total_approx_kl / total_seen,
         )
+
+
+def normalize_advantages(advantages: torch.Tensor) -> torch.Tensor:
+    if advantages.numel() == 0:
+        raise ValueError("advantages must not be empty.")
+
+    std, mean = torch.std_mean(advantages, unbiased=False)
+    if float(std.item()) == 0.0:
+        return torch.zeros_like(advantages)
+    return (advantages - mean) / (std + 1e-8)
 
 
 def make_minibatch_indices(
