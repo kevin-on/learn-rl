@@ -1,0 +1,38 @@
+experiment:
+  name: walker2d_ddpg
+  run_root: runs
+
+seed: 123
+
+env:
+  id: Walker2d-v4
+  num_envs: 1
+
+model:
+  name: ddpg_mlp
+  kwargs:
+    hidden_sizes: [400, 300]
+
+train:
+  steps: 1000000
+  batch_size: 64
+  buffer_capacity: 1000000
+  learning_starts: 10000
+  actor_learning_rate: 0.0001
+  critic_learning_rate: 0.001
+  critic_weight_decay: 0.01
+  discount_factor: 0.99
+  soft_update_rate: 0.001
+  exploration:
+    noise_type: ornstein-uhlenbeck
+    theta: 0.15
+    sigma: 0.2
+
+eval:
+  every_steps: 25000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 10000
+  save_plot: true
