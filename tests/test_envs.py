@@ -38,6 +38,9 @@ class FakeDiscreteVecEnv:
         assert env_ids.shape == (1,)
         return self.subset_observation
 
+    def render(self) -> np.ndarray:
+        return np.zeros((2, 4, 4, 3), dtype=np.uint8)
+
     def close(self) -> None:
         self.closed = True
 
@@ -105,6 +108,19 @@ def test_normalize_observation_vec_env_freezes_eval_stats() -> None:
     assert rms.count == 2.0
 
 
+def test_normalize_observation_vec_env_proxies_render() -> None:
+    env = FakeDiscreteVecEnv()
+    wrapper = NormalizeObservationVecEnv(
+        env,
+        training=False,
+        observation_rms=RunningMeanStd(shape=(1,), epsilon=0.0),
+    )
+
+    frame = wrapper.render()
+
+    assert frame.shape == (2, 4, 4, 3)
+
+
 def test_envpool_vec_env_cartpole_shapes() -> None:
     env = EnvPoolVecEnv(env_id="CartPole-v1", num_envs=2, seed=123)
     try:
@@ -120,6 +136,58 @@ def test_envpool_vec_env_cartpole_shapes() -> None:
 
         reset_observation = env.reset_subset(np.asarray([0], dtype=np.int32))
         assert reset_observation.shape == (1, 4)
+    finally:
+        env.close()
+
+
+def test_envpool_vec_env_passes_render_mode(monkeypatch) -> None:
+    class FakeEnv:
+        action_space = spaces.Discrete(2)
+        observation_space = spaces.Box(
+            low=-1.0,
+            high=1.0,
+            shape=(2,),
+            dtype=np.float32,
+        )
+
+        def reset(self, env_ids: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
+            batch_size = 2 if env_ids is None else len(env_ids)
+            return np.zeros((batch_size, 2), dtype=np.float32), {}
+
+        def step(
+            self, _action: np.ndarray
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict]:
+            return (
+                np.zeros((2, 2), dtype=np.float32),
+                np.ones(2, dtype=np.float32),
+                np.zeros(2, dtype=np.bool_),
+                np.zeros(2, dtype=np.bool_),
+                {"env_id": np.asarray([0, 1], dtype=np.int32)},
+            )
+
+        def render(self) -> np.ndarray:
+            return np.zeros((2, 8, 8, 3), dtype=np.uint8)
+
+        def close(self) -> None:
+            pass
+
+    captured_kwargs = {}
+
+    def fake_make_gymnasium(_env_id: str, **kwargs) -> FakeEnv:
+        captured_kwargs.update(kwargs)
+        return FakeEnv()
+
+    monkeypatch.setattr("envs.envpool.make_gymnasium", fake_make_gymnasium)
+    env = EnvPoolVecEnv(
+        env_id="Fake-v0",
+        num_envs=2,
+        seed=123,
+        render_mode="rgb_array",
+    )
+
+    try:
+        assert captured_kwargs["render_mode"] == "rgb_array"
+        assert env.render().shape == (2, 8, 8, 3)
     finally:
         env.close()
 

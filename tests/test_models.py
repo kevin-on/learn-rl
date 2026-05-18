@@ -75,7 +75,9 @@ def test_discrete_actor_critic_mlp_supports_relu_layer_norm() -> None:
 
     assert isinstance(dist, CategoricalPolicyDistribution)
     assert values.shape == (3,)
-    assert sum(isinstance(module, torch.nn.LayerNorm) for module in model.modules()) == 2
+    assert (
+        sum(isinstance(module, torch.nn.LayerNorm) for module in model.modules()) == 2
+    )
 
 
 def test_continuous_actor_critic_mlp_output_shapes() -> None:
@@ -132,7 +134,9 @@ def test_continuous_actor_critic_mlp_supports_relu_layer_norm() -> None:
     assert isinstance(dist, DiagGaussianPolicyDistribution)
     assert dist.deterministic().shape == (3, 2)
     assert values.shape == (3,)
-    assert sum(isinstance(module, torch.nn.LayerNorm) for module in model.modules()) == 2
+    assert (
+        sum(isinstance(module, torch.nn.LayerNorm) for module in model.modules()) == 2
+    )
 
 
 def test_ddpg_actor_critic_mlp_output_shapes_and_bounds() -> None:

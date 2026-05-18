@@ -13,6 +13,7 @@ from envs import (
     RunningMeanStd,
     VecEnv,
 )
+from videos import EpisodeVideoRecorder
 
 
 def choose_device(requested_device: str) -> torch.device:
@@ -96,12 +97,14 @@ def make_envpool_env(
     seed: int,
     evaluation: bool = False,
     observation_rms: RunningMeanStd | None = None,
+    render_mode: str | None = None,
 ) -> VecEnv:
     env: VecEnv = EnvPoolVecEnv(
         env_id=config.env.id,
         num_envs=num_envs,
         seed=seed,
         env_kwargs=envpool_kwargs(config, evaluation=evaluation),
+        render_mode=render_mode,
     )
     observation_normalization = config.env.observation_normalization
     if observation_normalization is None:
@@ -175,6 +178,7 @@ def evaluate_q_policy(
     q_net: torch.nn.Module,
     env: DiscreteVecEnv,
     num_episodes: int,
+    video_recorder: EpisodeVideoRecorder | None = None,
 ) -> list[float]:
     if env.num_envs != 1:
         raise ValueError("evaluation env must use num_envs=1.")
@@ -185,6 +189,8 @@ def evaluate_q_policy(
 
     for _episode_index in range(num_episodes):
         observation = env.reset()
+        if video_recorder is not None:
+            video_recorder.capture_frame(_episode_index, env.render)
         done = False
         episode_return = 0.0
         while not done:
@@ -198,11 +204,18 @@ def evaluate_q_policy(
                 raise ValueError(msg)
             action_index = int(q_values.argmax(dim=1).item())
             step = env.step(np.asarray([action_index], dtype=np.int32))
+            if video_recorder is not None:
+                video_recorder.capture_frame(_episode_index, env.render)
             observation = step.observation
             episode_return += float(step.reward[0])
             done = bool(step.terminated[0] or step.truncated[0])
 
         episode_returns.append(episode_return)
+        if video_recorder is not None:
+            video_recorder.finish_recording(
+                _episode_index,
+                metadata={"return": episode_return},
+            )
 
     if was_training:
         q_net.train()
@@ -215,6 +228,7 @@ def evaluate_actor_critic_policy(
     model: torch.nn.Module,
     env: VecEnv,
     num_episodes: int,
+    video_recorder: EpisodeVideoRecorder | None = None,
 ) -> list[float]:
     if env.num_envs != 1:
         raise ValueError("evaluation env must use num_envs=1.")
@@ -225,6 +239,8 @@ def evaluate_actor_critic_policy(
 
     for _episode_index in range(num_episodes):
         observation = env.reset()
+        if video_recorder is not None:
+            video_recorder.capture_frame(_episode_index, env.render)
         done = False
         episode_return = 0.0
         while not done:
@@ -232,11 +248,18 @@ def evaluate_actor_critic_policy(
             dist, _value = model(observation_tensor)
             action = dist.deterministic()
             step = env.step(action.cpu().numpy())
+            if video_recorder is not None:
+                video_recorder.capture_frame(_episode_index, env.render)
             observation = step.observation
             episode_return += float(step.reward[0])
             done = bool(step.terminated[0] or step.truncated[0])
 
         episode_returns.append(episode_return)
+        if video_recorder is not None:
+            video_recorder.finish_recording(
+                _episode_index,
+                metadata={"return": episode_return},
+            )
 
     if was_training:
         model.train()
@@ -249,6 +272,7 @@ def evaluate_ddpg_policy(
     model: torch.nn.Module,
     env: VecEnv,
     num_episodes: int,
+    video_recorder: EpisodeVideoRecorder | None = None,
 ) -> list[float]:
     if env.num_envs != 1:
         raise ValueError("evaluation env must use num_envs=1.")
@@ -262,17 +286,26 @@ def evaluate_ddpg_policy(
 
     for _episode_index in range(num_episodes):
         observation = env.reset()
+        if video_recorder is not None:
+            video_recorder.capture_frame(_episode_index, env.render)
         done = False
         episode_return = 0.0
         while not done:
             observation_tensor = torch.as_tensor(observation, device=device)
             action = model.act(observation_tensor)
             step = env.step(action.cpu().numpy())
+            if video_recorder is not None:
+                video_recorder.capture_frame(_episode_index, env.render)
             observation = step.observation
             episode_return += float(step.reward[0])
             done = bool(step.terminated[0] or step.truncated[0])
 
         episode_returns.append(episode_return)
+        if video_recorder is not None:
+            video_recorder.finish_recording(
+                _episode_index,
+                metadata={"return": episode_return},
+            )
 
     if was_training:
         model.train()

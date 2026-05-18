@@ -14,6 +14,7 @@ type ActionBatch = NDArray[np.generic]
 type EnvIdBatch = NDArray[np.int32]
 type EnvInfoLeaf = ArrayLike | int | float | bool | str
 type EnvInfo = Mapping[str, EnvInfoLeaf | Mapping[str, EnvInfoLeaf]]
+type EnvPoolKwarg = int | bool | str
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,9 @@ class VecEnv(Protocol):
     def reset_subset(self, env_ids: EnvIdBatch) -> ObservationBatch:
         raise NotImplementedError
 
+    def render(self) -> object:
+        raise NotImplementedError
+
     def close(self) -> None:
         raise NotImplementedError
 
@@ -82,19 +86,22 @@ class EnvPoolVecEnv(VecEnv):
         env_id: str,
         num_envs: int,
         seed: int,
-        env_kwargs: Mapping[str, int | bool] | None = None,
+        env_kwargs: Mapping[str, EnvPoolKwarg] | None = None,
+        render_mode: str | None = None,
     ) -> None:
         if num_envs <= 0:
             raise ValueError("num_envs must be positive.")
         if seed < 0:
             raise ValueError("seed must be non-negative.")
 
-        kwargs: dict[str, int | bool] = {
+        kwargs: dict[str, EnvPoolKwarg] = {
             "num_envs": num_envs,
             "batch_size": num_envs,
             "seed": seed,
         }
         kwargs.update(env_kwargs or {})
+        if render_mode is not None:
+            kwargs["render_mode"] = render_mode
         self.env = envpool.make_gymnasium(env_id, **kwargs)
         if not isinstance(self.env.observation_space, spaces.Box):
             raise TypeError("EnvPoolVecEnv requires a Box observation space.")
@@ -165,6 +172,9 @@ class EnvPoolVecEnv(VecEnv):
         assert env_ids.ndim == 1
         observation, _info = self.env.reset(env_ids)
         return _observation_batch(observation, batch_size=len(env_ids))
+
+    def render(self) -> object:
+        return self.env.render()
 
     def close(self) -> None:
         self.env.close()
@@ -314,6 +324,9 @@ class NormalizeObservationVecEnv(VecEnv):
     def reset_subset(self, env_ids: EnvIdBatch) -> ObservationBatch:
         observation = self.env.reset_subset(env_ids)
         return self._update_and_normalize(observation)
+
+    def render(self) -> object:
+        return self.env.render()
 
     def normalize_observation(self, observation: ObservationBatch) -> ObservationBatch:
         normalized = (

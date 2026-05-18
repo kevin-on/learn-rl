@@ -42,6 +42,9 @@ class FakeEnv:
             {"env_id": np.asarray([0, 1], dtype=np.int32)},
         )
 
+    def render(self) -> np.ndarray:
+        return np.zeros((2, 6, 6, 3), dtype=np.uint8)
+
     def close(self) -> None:
         pass
 
@@ -147,6 +150,41 @@ def test_make_envpool_env_wraps_and_shares_observation_stats(monkeypatch) -> Non
         assert eval_env.observation_rms is train_env.observation_rms
         assert train_env.training is True
         assert eval_env.training is False
+    finally:
+        train_env.close()
+        eval_env.close()
+
+
+def test_normalized_env_keeps_render_capability(monkeypatch) -> None:
+    captured_kwargs: list[dict] = []
+
+    def fake_make_gymnasium(_env_id: str, **kwargs) -> FakeEnv:
+        captured_kwargs.append(kwargs)
+        return FakeEnv()
+
+    monkeypatch.setattr("envs.envpool.make_gymnasium", fake_make_gymnasium)
+    config = a2c_config(
+        EnvConfig(
+            id="Fake-v0",
+            num_envs=2,
+            observation_normalization=ObservationNormalizationConfig(clip=5.0),
+        )
+    )
+
+    train_env = make_envpool_env(config, num_envs=2, seed=1)
+    eval_env = make_envpool_env(
+        config,
+        num_envs=2,
+        seed=2,
+        evaluation=True,
+        observation_rms=observation_normalization_stats(train_env),
+        render_mode="rgb_array",
+    )
+
+    try:
+        assert isinstance(eval_env, NormalizeObservationVecEnv)
+        assert captured_kwargs[-1]["render_mode"] == "rgb_array"
+        assert eval_env.render().shape == (2, 6, 6, 3)
     finally:
         train_env.close()
         eval_env.close()

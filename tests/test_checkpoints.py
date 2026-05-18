@@ -34,6 +34,7 @@ from ddpg import DDPG
 from dqn import DQN
 from envs import EnvPoolVecEnv
 from evaluate_checkpoint import (
+    _close_video_recorder,
     evaluate_actor_critic_checkpoint,
     evaluate_ddpg_checkpoint,
     evaluate_dqn_checkpoint,
@@ -1072,3 +1073,23 @@ def test_evaluate_checkpoint_helpers_return_episode_returns() -> None:
         dqn_env.close()
         ddpg_env.close()
         a2c_env.close()
+
+
+class FailingVideoRecorder:
+    def close(self) -> None:
+        raise RuntimeError("encoder failed")
+
+
+def test_close_video_recorder_preserves_primary_error() -> None:
+    primary_error = ValueError("evaluation failed")
+
+    _close_video_recorder(FailingVideoRecorder(), primary_error=primary_error)
+
+    assert primary_error.__notes__ == [
+        "video recorder close failed: RuntimeError('encoder failed')"
+    ]
+
+
+def test_close_video_recorder_raises_close_error_without_primary_error() -> None:
+    with pytest.raises(RuntimeError, match="encoder failed"):
+        _close_video_recorder(FailingVideoRecorder())

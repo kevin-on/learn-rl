@@ -66,6 +66,22 @@ Evaluate a saved DQN/DDPG/A2C/PPO checkpoint:
 uv run python src/evaluate_checkpoint.py runs/<run-name>/checkpoints/best.pt --episodes 20
 ```
 
+Save MP4 videos from checkpoint evaluation:
+
+```sh
+uv run python src/evaluate_checkpoint.py runs/<run-name>/checkpoints/best.pt \
+  --episodes 5 \
+  --video-dir runs/<run-name>/videos \
+  --video-episodes 2 \
+  --video-crf 28 \
+  --video-preset medium
+```
+
+Video capture uses EnvPool `rgb_array` rendering and saves only the first
+episode by default when `--video-dir` is set. Use `--video-frame-stride` and
+`--video-fps` to reduce frame count, and `--video-encoder-workers` to encode
+completed episode videos in parallel.
+
 ## Override Hyperparameters
 
 Use `--set` with dotted config keys:
