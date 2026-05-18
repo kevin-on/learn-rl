@@ -20,11 +20,9 @@ train:
   learning_starts: 100
   actor_learning_rate: 0.001
   critic_learning_rate: 0.001
-  critic_weight_decay: 0.0
   discount_factor: 0.99
   soft_update_rate: 0.005
   exploration:
-    noise_type: ornstein-uhlenbeck
     theta: 0.15
     sigma: 0.5
 
@@ -35,4 +33,3 @@ eval:
 
 logging:
   loss_every_steps: 10000
-  save_plot: true

@@ -17,6 +17,7 @@ from config import (
     load_config,
     load_ddpg_config,
     load_ppo_config,
+    load_td3_config,
     save_config,
 )
 
@@ -121,10 +122,49 @@ train:
   buffer_capacity: 100
   actor_learning_rate: 0.0001
   critic_learning_rate: 0.001
-  critic_weight_decay: 0.01
   discount_factor: 0.99
   soft_update_rate: 0.001
-  exploration: {{}}
+  exploration:
+    theta: 0.15
+    sigma: 0.2
+
+eval:
+  every_steps: 50
+  episodes: 1
+  seed: 10000
+
+logging:
+  loss_every_steps: 10
+"""
+
+
+def td3_yaml(env_yaml: str) -> str:
+    return f"""
+experiment:
+  name: test
+  run_root: runs
+
+seed: 123
+
+{env_yaml}
+
+model:
+  name: td3_mlp
+
+train:
+  steps: 100
+  batch_size: 32
+  buffer_capacity: 100
+  learning_starts: 0
+  actor_learning_rate: 0.0001
+  critic_learning_rate: 0.001
+  discount_factor: 0.99
+  soft_update_rate: 0.001
+  policy_delay: 2
+  target_policy_noise: 0.2
+  target_noise_clip: 0.5
+  exploration:
+    sigma: 0.1
 
 eval:
   every_steps: 50
@@ -573,7 +613,7 @@ env:
         load_config(path)
 
 
-def test_load_ddpg_config_parses_defaults(tmp_path: Path) -> None:
+def test_load_ddpg_config_parses_explicit_exploration(tmp_path: Path) -> None:
     path = write_config(
         tmp_path,
         ddpg_yaml(
@@ -607,11 +647,16 @@ env:
   num_envs: 4
 """
         ).replace(
-            "exploration: {}",
+            """
+  exploration:
+    theta: 0.15
+    sigma: 0.2
+""",
             """
   learning_starts: 100
   exploration:
     noise_type: normal
+    theta: 0.15
     sigma: 0.1
 """,
         ),
@@ -621,7 +666,31 @@ env:
 
     assert config.train.learning_starts == 100
     assert config.train.exploration.noise_type == "normal"
+    assert config.train.exploration.theta == 0.15
     assert config.train.exploration.sigma == 0.1
+
+
+def test_ddpg_requires_exploration_config(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        ddpg_yaml(
+            """
+env:
+  id: Pendulum-v1
+  num_envs: 1
+"""
+        ).replace(
+            """
+  exploration:
+    theta: 0.15
+    sigma: 0.2
+""",
+            "",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="exploration"):
+        load_ddpg_config(path)
 
 
 def test_ddpg_rejects_observation_normalization(tmp_path: Path) -> None:
@@ -639,6 +708,89 @@ env:
 
     with pytest.raises(ValueError, match="not supported for DDPG"):
         load_ddpg_config(path)
+
+
+def test_load_td3_config_parses_explicit_td3_parameters(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        td3_yaml(
+            """
+env:
+  id: Pendulum-v1
+  num_envs: 4
+"""
+        ),
+    )
+
+    config = load_td3_config(path)
+
+    assert config.env.id == "Pendulum-v1"
+    assert config.model.name == "td3_mlp"
+    assert config.train.learning_starts == 0
+    assert config.train.actor_learning_rate == 0.0001
+    assert config.train.critic_learning_rate == 0.001
+    assert config.train.policy_delay == 2
+    assert config.train.target_policy_noise == 0.2
+    assert config.train.target_noise_clip == 0.5
+    assert config.train.exploration.sigma == 0.1
+
+
+def test_load_td3_config_accepts_noise_overrides(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        td3_yaml(
+            """
+env:
+  id: Pendulum-v1
+  num_envs: 4
+"""
+        )
+        .replace(
+            "learning_starts: 0",
+            "learning_starts: 100",
+        )
+        .replace(
+            "policy_delay: 2",
+            "policy_delay: 3",
+        )
+        .replace(
+            "target_policy_noise: 0.2",
+            "target_policy_noise: 0.3",
+        )
+        .replace(
+            "target_noise_clip: 0.5",
+            "target_noise_clip: 0.4",
+        )
+        .replace(
+            "sigma: 0.1",
+            "sigma: 0.2",
+        ),
+    )
+
+    config = load_td3_config(path)
+
+    assert config.train.learning_starts == 100
+    assert config.train.policy_delay == 3
+    assert config.train.target_policy_noise == 0.3
+    assert config.train.target_noise_clip == 0.4
+    assert config.train.exploration.sigma == 0.2
+
+
+def test_td3_rejects_observation_normalization(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        td3_yaml(
+            """
+env:
+  id: Pendulum-v1
+  num_envs: 1
+  observation_normalization: {}
+"""
+        ),
+    )
+
+    with pytest.raises(ValueError, match="not supported for TD3"):
+        load_td3_config(path)
 
 
 def test_a3c_rejects_observation_normalization(tmp_path: Path) -> None:

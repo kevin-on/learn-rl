@@ -12,9 +12,7 @@ model:
   name: mlp
   kwargs:
     hidden_sizes: [256]
-    activation: relu
     layer_norm: true
-    orthogonal_init: false
 
 train:
   steps: 250000
@@ -38,4 +36,3 @@ eval:
 
 logging:
   loss_every_steps: 1000
-  save_plot: true

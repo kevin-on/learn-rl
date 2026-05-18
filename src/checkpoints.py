@@ -14,11 +14,12 @@ from config import (
     DQNConfig,
     ExperimentRunConfig,
     PPOConfig,
+    TD3Config,
     config_to_dict,
 )
 
 SCHEMA_VERSION = 1
-type AlgorithmName = Literal["dqn", "ddpg", "a2c", "ppo"]
+type AlgorithmName = Literal["dqn", "ddpg", "td3", "a2c", "ppo"]
 
 
 class CheckpointPayloadModel(BaseModel):
@@ -147,6 +148,8 @@ def config_from_checkpoint(payload: Mapping[str, Any]) -> ExperimentRunConfig:
         return DQNConfig.model_validate(payload["config"])
     if algorithm == "ddpg":
         return DDPGConfig.model_validate(payload["config"])
+    if algorithm == "td3":
+        return TD3Config.model_validate(payload["config"])
     if algorithm == "a2c":
         return A2CConfig.model_validate(payload["config"])
     if algorithm == "ppo":

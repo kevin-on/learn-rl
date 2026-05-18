@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 
 from checkpoints import config_from_checkpoint, load_checkpoint
-from config import A2CConfig, DDPGConfig, DQNConfig, PPOConfig
+from config import A2CConfig, DDPGConfig, DQNConfig, PPOConfig, TD3Config
 from experiment import (
     choose_device,
     evaluate_actor_critic_policy,
@@ -18,13 +18,14 @@ from models import (
     build_actor_critic_model,
     build_ddpg_actor_critic_model,
     build_q_model,
+    build_td3_actor_critic_model,
 )
 from videos import EpisodeVideoRecorder
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate a DQN, DDPG, A2C, or PPO checkpoint."
+        description="Evaluate a DQN, DDPG, TD3, A2C, or PPO checkpoint."
     )
     parser.add_argument("checkpoint", type=Path, help="Path to a .pt checkpoint file.")
     parser.add_argument(
@@ -156,6 +157,15 @@ def main() -> None:
                 device=device,
                 video_recorder=video_recorder,
             )
+        elif isinstance(config, TD3Config):
+            returns = evaluate_td3_checkpoint(
+                checkpoint=checkpoint,
+                config=config,
+                episodes=episodes,
+                seed=seed,
+                device=device,
+                video_recorder=video_recorder,
+            )
         elif isinstance(config, A2CConfig | PPOConfig):
             returns = evaluate_actor_critic_checkpoint(
                 checkpoint=checkpoint,
@@ -265,6 +275,40 @@ def evaluate_ddpg_checkpoint(
     )
     try:
         model = build_ddpg_actor_critic_model(
+            name=config.model.name,
+            observation_shape=env.observation_shape,
+            action_spec=env.action_spec,
+            kwargs=config.model.kwargs,
+        ).to(device)
+        model.load_state_dict(checkpoint["model_state"])
+        return evaluate_ddpg_policy(
+            model=model,
+            env=env,
+            num_episodes=episodes,
+            video_recorder=video_recorder,
+        )
+    finally:
+        env.close()
+
+
+def evaluate_td3_checkpoint(
+    *,
+    checkpoint: dict,
+    config: TD3Config,
+    episodes: int,
+    seed: int,
+    device,
+    video_recorder: EpisodeVideoRecorder | None = None,
+) -> list[float]:
+    env = make_envpool_env(
+        config,
+        num_envs=1,
+        seed=seed,
+        evaluation=True,
+        render_mode="rgb_array" if video_recorder is not None else None,
+    )
+    try:
+        model = build_td3_actor_critic_model(
             name=config.model.name,
             observation_shape=env.observation_shape,
             action_spec=env.action_spec,

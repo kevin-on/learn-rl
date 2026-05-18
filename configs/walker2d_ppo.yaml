@@ -38,4 +38,3 @@ eval:
 
 logging:
   loss_every_steps: 5000
-  save_plot: true
