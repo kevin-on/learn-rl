@@ -3,5 +3,5 @@
 __pycache__/
 *.py[cod]
 .env
-runs/
+runs
 .agents/skills/
