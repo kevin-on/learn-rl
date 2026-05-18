@@ -1,7 +1,5 @@
 import copy
 import math
-import random
-from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -13,6 +11,7 @@ from torch import nn
 
 from envs import BoxActionSpec, ObservationBatch, VecEnv
 from experiment import model_device
+from training_state import EpisodeTracker, ReplayBuffer
 
 type State = np.ndarray
 type Action = np.ndarray
@@ -174,11 +173,10 @@ class DDPG:
         self.soft_update_rate = soft_update_rate
         self.batch_size = batch_size
         self.learning_starts = learning_starts
-        self.replay_buffer: deque[Experience] = deque(maxlen=buffer_capacity)
+        self.replay_buffer = ReplayBuffer[Experience](buffer_capacity)
         self.step = 0
         self.update = 0
-        self._episode_returns = np.zeros(self.num_envs, dtype=np.float64)
-        self._episode_lengths = np.zeros(self.num_envs, dtype=np.int64)
+        self._episode_tracker = EpisodeTracker(self.num_envs)
         self._action_low = np.asarray(self.action_spec.low, dtype=np.float32)
         self._action_high = np.asarray(self.action_spec.high, dtype=np.float32)
         self._action_scale = (self._action_high - self._action_low) / 2.0
@@ -267,7 +265,7 @@ class DDPG:
             },
             "algorithm_state": {
                 "target_model_state": self.target_model.state_dict(),
-                "replay_buffer": list(self.replay_buffer),
+                "replay_buffer": self.replay_buffer.checkpoint_state(),
             },
         }
 
@@ -278,14 +276,10 @@ class DDPG:
         self.critic_optimizer.load_state_dict(optimizer_state["critic"])
         algorithm_state = state["algorithm_state"]
         self.target_model.load_state_dict(algorithm_state["target_model_state"])
-        self.replay_buffer = deque(
-            algorithm_state["replay_buffer"],
-            maxlen=self.replay_buffer.maxlen,
-        )
+        self.replay_buffer.load_checkpoint_state(algorithm_state["replay_buffer"])
         self.step = int(state["step"])
         self.update = int(state["update"])
-        self._episode_returns.fill(0.0)
-        self._episode_lengths.fill(0)
+        self._episode_tracker.reset()
         self._action_noise.reset()
 
     @torch.no_grad()
@@ -310,7 +304,7 @@ class DDPG:
         )
 
     def _update(self) -> DDPGUpdateStats:
-        batch = random.sample(self.replay_buffer, self.batch_size)
+        batch = self.replay_buffer.sample(self.batch_size)
         states, actions, rewards, next_states, terminals = zip(*batch, strict=False)
         states = torch.as_tensor(np.asarray(states), device=self.device)
         actions = torch.as_tensor(
@@ -373,21 +367,12 @@ class DDPG:
         done: np.ndarray,
         env_ids: np.ndarray,
     ) -> list[DDPGEpisode]:
-        self._episode_returns += rewards.astype(np.float64)
-        self._episode_lengths += 1
-
-        episodes: list[DDPGEpisode] = []
-        for env_slot in np.flatnonzero(done):
-            episodes.append(
-                DDPGEpisode(
-                    env_id=int(env_ids[env_slot]),
-                    episode_return=float(self._episode_returns[env_slot]),
-                    episode_length=int(self._episode_lengths[env_slot]),
-                )
-            )
-            self._episode_returns[env_slot] = 0.0
-            self._episode_lengths[env_slot] = 0
-        return episodes
+        return self._episode_tracker.record(
+            rewards=rewards,
+            done=done,
+            env_ids=env_ids,
+            episode_factory=DDPGEpisode,
+        )
 
 
 def validate_ddpg_hyperparameters(

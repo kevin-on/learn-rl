@@ -613,6 +613,35 @@ env:
         load_config(path)
 
 
+@pytest.mark.parametrize(
+    ("original", "replacement", "match"),
+    [
+        ("schedule: linear", "schedule: invalid", r"train\.exploration\.schedule"),
+        ("start: 1.0", "start: 1.1", r"train\.exploration\.start"),
+        ("end: 0.05", "end: 1.1", r"train\.exploration\.end"),
+    ],
+)
+def test_dqn_validates_exploration_config(
+    tmp_path: Path,
+    original: str,
+    replacement: str,
+    match: str,
+) -> None:
+    path = write_config(
+        tmp_path,
+        dqn_yaml(
+            """
+env:
+  id: CartPole-v1
+  num_envs: 1
+"""
+        ).replace(original, replacement),
+    )
+
+    with pytest.raises(ValueError, match=match):
+        load_config(path)
+
+
 def test_load_ddpg_config_parses_explicit_exploration(tmp_path: Path) -> None:
     path = write_config(
         tmp_path,

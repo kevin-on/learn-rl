@@ -16,6 +16,7 @@ from config import (
 )
 from envs import EnvPoolVecEnv, NormalizeObservationVecEnv
 from experiment import envpool_kwargs, make_envpool_env, observation_normalization_stats
+from train_runner import _next_scheduled_step
 
 
 class FakeEnv:
@@ -210,3 +211,10 @@ def test_envpool_kwargs_uses_atari_env_config() -> None:
     assert train_kwargs["reward_clip"] is True
     assert eval_kwargs["episodic_life"] is False
     assert eval_kwargs["reward_clip"] is False
+
+
+def test_next_scheduled_step_uses_arithmetic_for_large_resumed_step() -> None:
+    assert _next_scheduled_step(4, 0) == 4
+    assert _next_scheduled_step(4, 4) == 8
+    assert _next_scheduled_step(4, 7) == 8
+    assert _next_scheduled_step(4, 10**12) == 1_000_000_000_004

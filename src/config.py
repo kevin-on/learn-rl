@@ -49,9 +49,9 @@ class ModelConfig(ConfigModel):
 
 
 class DQNExplorationConfig(ConfigModel):
-    schedule: str = Field(min_length=1)
-    start: NonNegativeFloat
-    end: NonNegativeFloat
+    schedule: Literal["constant", "linear", "exponential"]
+    start: Probability
+    end: Probability
     decay_steps: PositiveInt
 
 

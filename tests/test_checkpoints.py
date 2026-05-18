@@ -541,6 +541,46 @@ def test_dqn_train_saves_last_best_and_resume_appends(
     assert checkpoint["step"] >= 8
 
 
+def test_dqn_invalid_exploration_fails_before_training_artifacts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = tiny_dqn_config(run_root=str(tmp_path / "runs"))
+    config = config.model_copy(
+        update={
+            "train": config.train.model_copy(
+                update={
+                    "exploration": config.train.exploration.model_copy(
+                        update={"schedule": "invalid"}
+                    )
+                }
+            )
+        }
+    )
+    config_path = tmp_path / "config.yaml"
+    run_dir = tmp_path / "run"
+
+    save_config(config, config_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train_dqn.py",
+            "--config",
+            str(config_path),
+            "--run-dir",
+            str(run_dir),
+            "--no-plot",
+        ],
+    )
+
+    with pytest.raises(ValueError, match=r"exploration\.schedule"):
+        train_dqn_main()
+
+    assert not (run_dir / "metrics.jsonl").exists()
+    assert not (run_dir / "checkpoints" / "last.pt").exists()
+
+
 def test_ddpg_train_saves_last_best_and_resume_appends(
     tmp_path: Path,
     monkeypatch,

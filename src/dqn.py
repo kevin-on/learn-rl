@@ -1,6 +1,4 @@
 import copy
-import random
-from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -13,6 +11,7 @@ from torch import nn
 from envs import DiscreteVecEnv, ObservationBatch
 from experiment import model_device
 from rl_math import clip_grad_norm
+from training_state import EpisodeTracker, ReplayBuffer
 
 type State = np.ndarray
 
@@ -83,10 +82,9 @@ class DQN:
         self.batch_size = batch_size
         self.learning_starts = learning_starts
         self.max_grad_norm = max_grad_norm
-        self.replay_buffer: deque[Experience] = deque(maxlen=buffer_capacity)
+        self.replay_buffer = ReplayBuffer[Experience](buffer_capacity)
         self.step = 0
-        self._episode_returns = np.zeros(self.num_envs, dtype=np.float64)
-        self._episode_lengths = np.zeros(self.num_envs, dtype=np.int64)
+        self._episode_tracker = EpisodeTracker(self.num_envs)
 
     def train(
         self,
@@ -180,7 +178,7 @@ class DQN:
             "optimizer_state": self.optimizer.state_dict(),
             "algorithm_state": {
                 "target_model_state": self.target_q_net.state_dict(),
-                "replay_buffer": list(self.replay_buffer),
+                "replay_buffer": self.replay_buffer.checkpoint_state(),
             },
         }
 
@@ -189,13 +187,9 @@ class DQN:
         self.optimizer.load_state_dict(state["optimizer_state"])
         algorithm_state = state["algorithm_state"]
         self.target_q_net.load_state_dict(algorithm_state["target_model_state"])
-        self.replay_buffer = deque(
-            algorithm_state["replay_buffer"],
-            maxlen=self.replay_buffer.maxlen,
-        )
+        self.replay_buffer.load_checkpoint_state(algorithm_state["replay_buffer"])
         self.step = int(state["step"])
-        self._episode_returns.fill(0.0)
-        self._episode_lengths.fill(0)
+        self._episode_tracker.reset()
 
     def _select_actions(
         self, observation: ObservationBatch, exploration_rate: float
@@ -215,7 +209,7 @@ class DQN:
         return np.where(explore, random_actions, greedy_actions).astype(np.int32)
 
     def _compute_td_loss(self) -> torch.Tensor:
-        batch = random.sample(self.replay_buffer, self.batch_size)
+        batch = self.replay_buffer.sample(self.batch_size)
         states, action_indices, rewards, next_states, terminals = zip(
             *batch, strict=False
         )
@@ -251,21 +245,12 @@ class DQN:
         done: np.ndarray,
         env_ids: np.ndarray,
     ) -> list[DQNEpisode]:
-        self._episode_returns += rewards.astype(np.float64)
-        self._episode_lengths += 1
-
-        episodes: list[DQNEpisode] = []
-        for env_slot in np.flatnonzero(done):
-            episodes.append(
-                DQNEpisode(
-                    env_id=int(env_ids[env_slot]),
-                    episode_return=float(self._episode_returns[env_slot]),
-                    episode_length=int(self._episode_lengths[env_slot]),
-                )
-            )
-            self._episode_returns[env_slot] = 0.0
-            self._episode_lengths[env_slot] = 0
-        return episodes
+        return self._episode_tracker.record(
+            rewards=rewards,
+            done=done,
+            env_ids=env_ids,
+            episode_factory=DQNEpisode,
+        )
 
 
 def validate_exploration_rate(exploration_rate: float) -> float:
