@@ -148,10 +148,10 @@ class ContinuousActorCriticMLP(nn.Module):
         observation_shape: tuple[int, ...],
         action_shape: tuple[int, ...],
         hidden_sizes: list[int],
-        init_log_std: float = 0.0,
-        log_std_min: float = -20.0,
-        log_std_max: float = 2.0,
-        activation: str = "tanh",
+        init_log_std: float,
+        log_std_min: float,
+        log_std_max: float,
+        activation: str = "relu",
         layer_norm: bool = False,
         orthogonal_init: bool = False,
     ) -> None:
@@ -234,20 +234,10 @@ class DDPGActorCriticMLP(nn.Module):
         if action_size <= 0:
             raise ValueError("action_size must be positive.")
 
-        action_low = torch.as_tensor(action_spec.low, dtype=torch.float32)
-        action_high = torch.as_tensor(action_spec.high, dtype=torch.float32)
-        if (
-            action_low.shape != action_spec.shape
-            or action_high.shape != action_spec.shape
-        ):
-            msg = "action bounds must match action_spec.shape."
-            raise ValueError(msg)
-        if not torch.all(torch.isfinite(action_low)) or not torch.all(
-            torch.isfinite(action_high)
-        ):
-            raise ValueError("DDPG requires finite Box action bounds.")
-        if not torch.all(action_low < action_high):
-            raise ValueError("action_spec.low must be less than action_spec.high.")
+        action_low, action_high = _validated_box_action_bounds(
+            action_spec,
+            algorithm_name="DDPG",
+        )
 
         self.action_shape = action_spec.shape
         self.actor = _build_mlp_with_output(
@@ -288,6 +278,111 @@ class DDPGActorCriticMLP(nn.Module):
         observations = rearrange(observations, "batch ... -> batch (...)")
         actions = rearrange(actions, "batch ... -> batch (...)")
         return self.critic(torch.cat([observations, actions], dim=1))
+
+
+class TD3ActorCriticMLP(nn.Module):
+    def __init__(
+        self,
+        observation_shape: tuple[int, ...],
+        action_spec: BoxActionSpec,
+        hidden_sizes: list[int],
+    ) -> None:
+        super().__init__()
+        validate_hidden_sizes(hidden_sizes)
+
+        observation_size = math.prod(observation_shape)
+        action_size = math.prod(action_spec.shape)
+        if observation_size <= 0:
+            raise ValueError("observation_size must be positive.")
+        if action_size <= 0:
+            raise ValueError("action_size must be positive.")
+
+        action_low, action_high = _validated_box_action_bounds(
+            action_spec,
+            algorithm_name="TD3",
+        )
+
+        self.action_shape = action_spec.shape
+        self.actor = _build_mlp_with_output(
+            input_size=observation_size,
+            hidden_sizes=hidden_sizes,
+            output_size=action_size,
+            output_activation=nn.Tanh(),
+        )
+        self.critic1 = _build_mlp_with_output(
+            input_size=observation_size + action_size,
+            hidden_sizes=hidden_sizes,
+            output_size=1,
+        )
+        self.critic2 = _build_mlp_with_output(
+            input_size=observation_size + action_size,
+            hidden_sizes=hidden_sizes,
+            output_size=1,
+        )
+        self.register_buffer(
+            "action_scale",
+            (action_high - action_low) / 2.0,
+        )
+        self.register_buffer(
+            "action_bias",
+            (action_high + action_low) / 2.0,
+        )
+
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        return self.act(observations)
+
+    def act(self, observations: torch.Tensor) -> torch.Tensor:
+        observations = observations.to(dtype=torch.float32)
+        observations = rearrange(observations, "batch ... -> batch (...)")
+        normalized_actions = self.actor(observations).reshape(
+            observations.shape[0],
+            *self.action_shape,
+        )
+        return normalized_actions * self.action_scale + self.action_bias
+
+    def q1(self, observations: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        return self.critic1(self._critic_input(observations, actions))
+
+    def q2(self, observations: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        return self.critic2(self._critic_input(observations, actions))
+
+    def q_pair(
+        self,
+        observations: torch.Tensor,
+        actions: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        critic_input = self._critic_input(observations, actions)
+        return self.critic1(critic_input), self.critic2(critic_input)
+
+    def _critic_input(
+        self,
+        observations: torch.Tensor,
+        actions: torch.Tensor,
+    ) -> torch.Tensor:
+        observations = observations.to(dtype=torch.float32)
+        actions = actions.to(dtype=torch.float32)
+        observations = rearrange(observations, "batch ... -> batch (...)")
+        actions = rearrange(actions, "batch ... -> batch (...)")
+        return torch.cat([observations, actions], dim=1)
+
+
+def _validated_box_action_bounds(
+    action_spec: BoxActionSpec,
+    *,
+    algorithm_name: str,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    action_low = torch.as_tensor(action_spec.low, dtype=torch.float32)
+    action_high = torch.as_tensor(action_spec.high, dtype=torch.float32)
+    if action_low.shape != action_spec.shape or action_high.shape != action_spec.shape:
+        msg = "action bounds must match action_spec.shape."
+        raise ValueError(msg)
+    if not torch.all(torch.isfinite(action_low)) or not torch.all(
+        torch.isfinite(action_high)
+    ):
+        raise ValueError(f"{algorithm_name} requires finite Box action bounds.")
+    if not torch.all(action_low < action_high):
+        raise ValueError("action_spec.low must be less than action_spec.high.")
+    return action_low, action_high
 
 
 def _build_mlp_with_output(
@@ -388,6 +483,11 @@ DDPG_ACTOR_CRITIC_FACTORIES: dict[str, ModelFactory] = {
 }
 
 
+TD3_ACTOR_CRITIC_FACTORIES: dict[str, ModelFactory] = {
+    "td3_mlp": TD3ActorCriticMLP,
+}
+
+
 def build_q_model(
     *,
     name: str,
@@ -481,4 +581,33 @@ def build_ddpg_actor_critic_model(
         )
     except TypeError as exc:
         msg = f"Invalid kwargs for DDPG actor-critic model {name!r}: {exc}"
+        raise ValueError(msg) from exc
+
+
+def build_td3_actor_critic_model(
+    *,
+    name: str,
+    observation_shape: tuple[int, ...],
+    action_spec: ActionSpec,
+    kwargs: Mapping[str, Any],
+) -> nn.Module:
+    if not isinstance(action_spec, BoxActionSpec):
+        raise ValueError("TD3 requires a Box action space.")
+
+    factory = TD3_ACTOR_CRITIC_FACTORIES.get(name)
+    if factory is None:
+        known_models = ", ".join(sorted(TD3_ACTOR_CRITIC_FACTORIES))
+        msg = (
+            f"Unknown TD3 actor-critic model {name!r}; expected one of: {known_models}."
+        )
+        raise ValueError(msg)
+
+    try:
+        return factory(
+            observation_shape=observation_shape,
+            action_spec=action_spec,
+            **dict(kwargs),
+        )
+    except TypeError as exc:
+        msg = f"Invalid kwargs for TD3 actor-critic model {name!r}: {exc}"
         raise ValueError(msg) from exc

@@ -6,6 +6,7 @@ from models import (
     build_actor_critic_model,
     build_ddpg_actor_critic_model,
     build_q_model,
+    build_td3_actor_critic_model,
 )
 from policies import CategoricalPolicyDistribution, DiagGaussianPolicyDistribution
 
@@ -75,7 +76,9 @@ def test_discrete_actor_critic_mlp_supports_relu_layer_norm() -> None:
 
     assert isinstance(dist, CategoricalPolicyDistribution)
     assert values.shape == (3,)
-    assert sum(isinstance(module, torch.nn.LayerNorm) for module in model.modules()) == 2
+    assert (
+        sum(isinstance(module, torch.nn.LayerNorm) for module in model.modules()) == 2
+    )
 
 
 def test_continuous_actor_critic_mlp_output_shapes() -> None:
@@ -108,6 +111,21 @@ def test_continuous_actor_critic_mlp_output_shapes() -> None:
     assert not hasattr(model, "trunk")
 
 
+def test_continuous_actor_critic_mlp_requires_log_std_knobs() -> None:
+    with pytest.raises(ValueError, match="init_log_std"):
+        build_actor_critic_model(
+            name="continuous_mlp",
+            observation_shape=(3,),
+            action_spec=BoxActionSpec(
+                shape=(2,),
+                low=torch.full((2,), -1.0).numpy(),
+                high=torch.full((2,), 1.0).numpy(),
+                dtype=torch.full((2,), 0.0).numpy().dtype,
+            ),
+            kwargs={"hidden_sizes": [8]},
+        )
+
+
 def test_continuous_actor_critic_mlp_supports_relu_layer_norm() -> None:
     model = build_actor_critic_model(
         name="continuous_mlp",
@@ -120,10 +138,11 @@ def test_continuous_actor_critic_mlp_supports_relu_layer_norm() -> None:
         ),
         kwargs={
             "hidden_sizes": [8],
-            "activation": "relu",
             "layer_norm": True,
             "orthogonal_init": True,
             "init_log_std": 0.0,
+            "log_std_min": -20.0,
+            "log_std_max": 2.0,
         },
     )
 
@@ -132,7 +151,9 @@ def test_continuous_actor_critic_mlp_supports_relu_layer_norm() -> None:
     assert isinstance(dist, DiagGaussianPolicyDistribution)
     assert dist.deterministic().shape == (3, 2)
     assert values.shape == (3,)
-    assert sum(isinstance(module, torch.nn.LayerNorm) for module in model.modules()) == 2
+    assert (
+        sum(isinstance(module, torch.nn.LayerNorm) for module in model.modules()) == 2
+    )
 
 
 def test_ddpg_actor_critic_mlp_output_shapes_and_bounds() -> None:
@@ -166,6 +187,41 @@ def test_ddpg_actor_critic_mlp_output_shapes_and_bounds() -> None:
     assert model.critic[0].in_features == 5
     assert not hasattr(model, "state_layer")
     assert not hasattr(model, "post_action_trunk")
+
+
+def test_td3_actor_critic_mlp_output_shapes_and_bounds() -> None:
+    action_spec = BoxActionSpec(
+        shape=(2,),
+        low=torch.tensor([-2.0, -1.0]).numpy(),
+        high=torch.tensor([2.0, 3.0]).numpy(),
+        dtype=torch.full((2,), 0.0).numpy().dtype,
+    )
+    model = build_td3_actor_critic_model(
+        name="td3_mlp",
+        observation_shape=(3,),
+        action_spec=action_spec,
+        kwargs={"hidden_sizes": [8, 8]},
+    )
+
+    observations = torch.zeros(4, 3)
+    actions = model.act(observations)
+    q1_values, q2_values = model.q_pair(observations, actions)
+
+    assert actions.shape == (4, 2)
+    assert torch.all(actions >= torch.tensor([-2.0, -1.0]))
+    assert torch.all(actions <= torch.tensor([2.0, 3.0]))
+    assert q1_values.shape == (4, 1)
+    assert q2_values.shape == (4, 1)
+    assert torch.equal(model.q1(observations, actions), q1_values)
+    assert hasattr(model, "actor")
+    assert hasattr(model, "critic1")
+    assert hasattr(model, "critic2")
+    assert model.critic1 is not model.critic2
+    assert isinstance(model.actor[-1], torch.nn.Tanh)
+    assert isinstance(model.critic1[0], torch.nn.Linear)
+    assert model.critic1[0].in_features == 5
+    assert isinstance(model.critic2[0], torch.nn.Linear)
+    assert model.critic2[0].in_features == 5
 
 
 def test_ddpg_actor_critic_mlp_rejects_empty_hidden_sizes() -> None:

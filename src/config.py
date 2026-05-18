@@ -57,8 +57,12 @@ class DQNExplorationConfig(ConfigModel):
 
 class DDPGExplorationConfig(ConfigModel):
     noise_type: Literal["ornstein-uhlenbeck", "normal"] = "ornstein-uhlenbeck"
-    theta: PositiveFloat = 0.15
-    sigma: NonNegativeFloat = 0.2
+    theta: PositiveFloat
+    sigma: NonNegativeFloat
+
+
+class TD3ExplorationConfig(ConfigModel):
+    sigma: NonNegativeFloat
 
 
 class DQNTrainConfig(ConfigModel):
@@ -90,6 +94,27 @@ class DDPGTrainConfig(ConfigModel):
     discount_factor: Probability
     soft_update_rate: Probability
     exploration: DDPGExplorationConfig
+
+    @model_validator(mode="after")
+    def validate_capacity(self) -> Self:
+        if self.buffer_capacity < self.batch_size:
+            raise ValueError("train.buffer_capacity must be at least train.batch_size.")
+        return self
+
+
+class TD3TrainConfig(ConfigModel):
+    steps: PositiveInt
+    batch_size: PositiveInt
+    buffer_capacity: PositiveInt
+    learning_starts: NonNegativeInt
+    actor_learning_rate: PositiveFloat
+    critic_learning_rate: PositiveFloat
+    discount_factor: Probability
+    soft_update_rate: Probability
+    policy_delay: PositiveInt
+    target_policy_noise: NonNegativeFloat
+    target_noise_clip: NonNegativeFloat
+    exploration: TD3ExplorationConfig
 
     @model_validator(mode="after")
     def validate_capacity(self) -> Self:
@@ -192,6 +217,27 @@ class DDPGConfig(ConfigModel):
         return self
 
 
+class TD3Config(ConfigModel):
+    experiment: ExperimentConfig
+    env: EnvConfig
+    seed: NonNegativeInt
+    model: ModelConfig
+    train: TD3TrainConfig
+    eval: EvalConfig
+    logging: LoggingConfig
+    checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
+
+    @model_validator(mode="after")
+    def validate_algorithm_support(self) -> Self:
+        if self.env.observation_normalization is not None:
+            raise ValueError(
+                "env.observation_normalization is not supported for TD3 yet; "
+                "replay-buffer samples need raw-observation storage and current-stat "
+                "normalization."
+            )
+        return self
+
+
 class A2CConfig(ConfigModel):
     experiment: ExperimentConfig
     env: EnvConfig
@@ -244,7 +290,9 @@ class PPOConfig(ConfigModel):
         return self
 
 
-type ExperimentRunConfig = DQNConfig | DDPGConfig | A2CConfig | A3CConfig | PPOConfig
+type ExperimentRunConfig = (
+    DQNConfig | DDPGConfig | TD3Config | A2CConfig | A3CConfig | PPOConfig
+)
 
 
 def load_config(config_path: Path, overrides: list[str] | None = None) -> DQNConfig:
@@ -255,6 +303,10 @@ def load_ddpg_config(
     config_path: Path, overrides: list[str] | None = None
 ) -> DDPGConfig:
     return _load_run_config(config_path, DDPGConfig, overrides)
+
+
+def load_td3_config(config_path: Path, overrides: list[str] | None = None) -> TD3Config:
+    return _load_run_config(config_path, TD3Config, overrides)
 
 
 def load_a2c_config(config_path: Path, overrides: list[str] | None = None) -> A2CConfig:

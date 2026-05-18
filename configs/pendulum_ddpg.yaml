@@ -19,7 +19,6 @@ train:
   buffer_capacity: 200000
   actor_learning_rate: 0.001
   critic_learning_rate: 0.001
-  critic_weight_decay: 0.0
   discount_factor: 0.98
   soft_update_rate: 0.005
   exploration:
@@ -33,4 +32,3 @@ eval:
 
 logging:
   loss_every_steps: 1000
-  save_plot: true
