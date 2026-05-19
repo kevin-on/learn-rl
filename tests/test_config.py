@@ -17,6 +17,7 @@ from config import (
     load_config,
     load_ddpg_config,
     load_ppo_config,
+    load_sac_config,
     load_td3_config,
     save_config,
 )
@@ -165,6 +166,46 @@ train:
   target_noise_clip: 0.5
   exploration:
     sigma: 0.1
+
+eval:
+  every_steps: 50
+  episodes: 1
+  seed: 10000
+
+logging:
+  loss_every_steps: 10
+"""
+
+
+def sac_yaml(env_yaml: str) -> str:
+    return f"""
+experiment:
+  name: test
+  run_root: runs
+
+seed: 123
+
+{env_yaml}
+
+model:
+  name: sac_mlp
+  kwargs:
+    hidden_sizes: [8, 8]
+    log_std_min: -20.0
+    log_std_max: 2.0
+
+train:
+  steps: 100
+  batch_size: 32
+  buffer_capacity: 100
+  learning_starts: 0
+  actor_learning_rate: 0.0003
+  critic_learning_rate: 0.0003
+  temperature_learning_rate: 0.0003
+  initial_alpha: 1.0
+  target_entropy: auto
+  discount_factor: 0.99
+  soft_update_rate: 0.005
 
 eval:
   every_steps: 50
@@ -820,6 +861,88 @@ env:
 
     with pytest.raises(ValueError, match="not supported for TD3"):
         load_td3_config(path)
+
+
+def test_load_sac_config_parses_explicit_sac_parameters(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        sac_yaml(
+            """
+env:
+  id: Pendulum-v1
+  num_envs: 4
+"""
+        ),
+    )
+
+    config = load_sac_config(path)
+
+    assert config.env.id == "Pendulum-v1"
+    assert config.model.name == "sac_mlp"
+    assert config.model.kwargs["log_std_min"] == -20.0
+    assert config.model.kwargs["log_std_max"] == 2.0
+    assert config.train.learning_starts == 0
+    assert config.train.actor_learning_rate == 0.0003
+    assert config.train.critic_learning_rate == 0.0003
+    assert config.train.temperature_learning_rate == 0.0003
+    assert config.train.initial_alpha == 1.0
+    assert config.train.target_entropy == "auto"
+
+
+def test_load_sac_config_requires_log_std_bounds(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        sac_yaml(
+            """
+env:
+  id: Pendulum-v1
+  num_envs: 4
+"""
+        ).replace(
+            "    log_std_min: -20.0\n    log_std_max: 2.0\n",
+            "",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="log_std_min"):
+        load_sac_config(path)
+
+
+def test_load_sac_config_accepts_numeric_target_entropy(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        sac_yaml(
+            """
+env:
+  id: Pendulum-v1
+  num_envs: 4
+"""
+        ).replace(
+            "target_entropy: auto",
+            "target_entropy: -0.5",
+        ),
+    )
+
+    config = load_sac_config(path)
+
+    assert config.train.target_entropy == -0.5
+
+
+def test_sac_rejects_observation_normalization(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        sac_yaml(
+            """
+env:
+  id: Pendulum-v1
+  num_envs: 1
+  observation_normalization: {}
+"""
+        ),
+    )
+
+    with pytest.raises(ValueError, match="not supported for SAC"):
+        load_sac_config(path)
 
 
 def test_a3c_rejects_observation_normalization(tmp_path: Path) -> None:

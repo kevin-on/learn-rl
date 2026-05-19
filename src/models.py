@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
@@ -366,6 +367,144 @@ class TD3ActorCriticMLP(nn.Module):
         return torch.cat([observations, actions], dim=1)
 
 
+class SACActorCriticMLP(nn.Module):
+    def __init__(
+        self,
+        observation_shape: tuple[int, ...],
+        action_spec: BoxActionSpec,
+        hidden_sizes: list[int],
+        log_std_min: float,
+        log_std_max: float,
+        activation: str = "relu",
+        layer_norm: bool = False,
+    ) -> None:
+        super().__init__()
+        validate_hidden_sizes(hidden_sizes)
+        if log_std_min >= log_std_max:
+            raise ValueError("log_std_min must be less than log_std_max.")
+
+        observation_size = math.prod(observation_shape)
+        action_size = math.prod(action_spec.shape)
+        if observation_size <= 0:
+            raise ValueError("observation_size must be positive.")
+        if action_size <= 0:
+            raise ValueError("action_size must be positive.")
+
+        action_low, action_high = _validated_box_action_bounds(
+            action_spec,
+            algorithm_name="SAC",
+        )
+
+        self.action_shape = action_spec.shape
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
+        actor_trunk, actor_output_size = build_mlp_layers(
+            input_size=observation_size,
+            hidden_sizes=hidden_sizes,
+            activation=activation,
+            layer_norm=layer_norm,
+        )
+        self.actor = nn.ModuleDict(
+            {
+                "trunk": actor_trunk,
+                "mean_head": nn.Linear(actor_output_size, action_size),
+                "log_std_head": nn.Linear(actor_output_size, action_size),
+            }
+        )
+        self.critic1 = _build_mlp_with_output(
+            input_size=observation_size + action_size,
+            hidden_sizes=hidden_sizes,
+            output_size=1,
+            activation=activation,
+            layer_norm=layer_norm,
+        )
+        self.critic2 = _build_mlp_with_output(
+            input_size=observation_size + action_size,
+            hidden_sizes=hidden_sizes,
+            output_size=1,
+            activation=activation,
+            layer_norm=layer_norm,
+        )
+        self.register_buffer(
+            "action_scale",
+            (action_high - action_low) / 2.0,
+        )
+        self.register_buffer(
+            "action_bias",
+            (action_high + action_low) / 2.0,
+        )
+
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        return self.act(observations)
+
+    def act(self, observations: torch.Tensor) -> torch.Tensor:
+        mean, _log_std = self._actor_distribution_params(observations)
+        normalized_actions = torch.tanh(mean).reshape(
+            observations.shape[0],
+            *self.action_shape,
+        )
+        return normalized_actions * self.action_scale + self.action_bias
+
+    def sample_action(
+        self,
+        observations: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        mean, log_std = self._actor_distribution_params(observations)
+        distribution = torch.distributions.Normal(mean, log_std.exp())
+        raw_actions = distribution.rsample()
+        normalized_actions = torch.tanh(raw_actions)
+        actions = normalized_actions.reshape(
+            observations.shape[0],
+            *self.action_shape,
+        )
+        scaled_actions = actions * self.action_scale + self.action_bias
+
+        log_prob = distribution.log_prob(raw_actions)
+        squash_log_det = 2.0 * (
+            math.log(2.0) - raw_actions - F.softplus(-2.0 * raw_actions)
+        )
+        action_scale_log_det = self.action_scale.reshape(1, -1).log()
+        log_prob = log_prob - squash_log_det - action_scale_log_det
+        log_prob = log_prob.sum(dim=1, keepdim=True)
+        return scaled_actions, log_prob
+
+    def q1(self, observations: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        return self.critic1(self._critic_input(observations, actions))
+
+    def q2(self, observations: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        return self.critic2(self._critic_input(observations, actions))
+
+    def q_pair(
+        self,
+        observations: torch.Tensor,
+        actions: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        critic_input = self._critic_input(observations, actions)
+        return self.critic1(critic_input), self.critic2(critic_input)
+
+    def _actor_distribution_params(
+        self,
+        observations: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        observations = observations.to(dtype=torch.float32)
+        observations = rearrange(observations, "batch ... -> batch (...)")
+        features = self.actor["trunk"](observations)
+        mean = self.actor["mean_head"](features)
+        log_std = self.actor["log_std_head"](features)
+        return mean, torch.clamp(log_std, self.log_std_min, self.log_std_max)
+
+    def _critic_input(
+        self,
+        observations: torch.Tensor,
+        actions: torch.Tensor,
+    ) -> torch.Tensor:
+        observations = observations.to(dtype=torch.float32)
+        actions = actions.to(dtype=torch.float32)
+        observations = rearrange(observations, "batch ... -> batch (...)")
+        actions = rearrange(actions, "batch ... -> batch (...)")
+        return torch.cat([observations, actions], dim=1)
+
+
 def _validated_box_action_bounds(
     action_spec: BoxActionSpec,
     *,
@@ -391,10 +530,14 @@ def _build_mlp_with_output(
     hidden_sizes: list[int],
     output_size: int,
     output_activation: nn.Module | None = None,
+    activation: str = "relu",
+    layer_norm: bool = False,
 ) -> nn.Sequential:
     trunk, trunk_output_size = build_mlp_layers(
         input_size=input_size,
         hidden_sizes=hidden_sizes,
+        activation=activation,
+        layer_norm=layer_norm,
     )
     layers = [
         *trunk.children(),
@@ -485,6 +628,11 @@ DDPG_ACTOR_CRITIC_FACTORIES: dict[str, ModelFactory] = {
 
 TD3_ACTOR_CRITIC_FACTORIES: dict[str, ModelFactory] = {
     "td3_mlp": TD3ActorCriticMLP,
+}
+
+
+SAC_ACTOR_CRITIC_FACTORIES: dict[str, ModelFactory] = {
+    "sac_mlp": SACActorCriticMLP,
 }
 
 
@@ -610,4 +758,33 @@ def build_td3_actor_critic_model(
         )
     except TypeError as exc:
         msg = f"Invalid kwargs for TD3 actor-critic model {name!r}: {exc}"
+        raise ValueError(msg) from exc
+
+
+def build_sac_actor_critic_model(
+    *,
+    name: str,
+    observation_shape: tuple[int, ...],
+    action_spec: ActionSpec,
+    kwargs: Mapping[str, Any],
+) -> nn.Module:
+    if not isinstance(action_spec, BoxActionSpec):
+        raise ValueError("SAC requires a Box action space.")
+
+    factory = SAC_ACTOR_CRITIC_FACTORIES.get(name)
+    if factory is None:
+        known_models = ", ".join(sorted(SAC_ACTOR_CRITIC_FACTORIES))
+        msg = (
+            f"Unknown SAC actor-critic model {name!r}; expected one of: {known_models}."
+        )
+        raise ValueError(msg)
+
+    try:
+        return factory(
+            observation_shape=observation_shape,
+            action_spec=action_spec,
+            **dict(kwargs),
+        )
+    except TypeError as exc:
+        msg = f"Invalid kwargs for SAC actor-critic model {name!r}: {exc}"
         raise ValueError(msg) from exc
