@@ -8,9 +8,11 @@ from models import (
     build_actor_critic_model,
     build_ddpg_actor_critic_model,
     build_q_model,
+    build_sac_actor_critic_model,
     build_td3_actor_critic_model,
 )
 from ppo import PPO, normalize_advantages
+from sac import SAC
 from td3 import TD3
 
 
@@ -170,6 +172,35 @@ def test_td3_pendulum_tiny_smoke() -> None:
             model,
             actor_learning_rate=1e-3,
             critic_learning_rate=1e-3,
+            discount_factor=0.99,
+            soft_update_rate=0.005,
+            buffer_capacity=16,
+            batch_size=4,
+        )
+        agent.train(num_steps=6)
+    finally:
+        env.close()
+
+
+def test_sac_pendulum_tiny_smoke() -> None:
+    env = EnvPoolVecEnv(env_id="Pendulum-v1", num_envs=2, seed=8)
+    try:
+        model = build_sac_actor_critic_model(
+            name="sac_mlp",
+            observation_shape=env.observation_shape,
+            action_spec=env.action_spec,
+            kwargs={
+                "hidden_sizes": [8, 8],
+                "log_std_min": -20.0,
+                "log_std_max": 2.0,
+            },
+        )
+        agent = SAC(
+            env,
+            model,
+            actor_learning_rate=1e-3,
+            critic_learning_rate=1e-3,
+            temperature_learning_rate=1e-3,
             discount_factor=0.99,
             soft_update_rate=0.005,
             buffer_capacity=16,

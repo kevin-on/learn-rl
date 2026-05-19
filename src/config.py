@@ -123,6 +123,26 @@ class TD3TrainConfig(ConfigModel):
         return self
 
 
+class SACTrainConfig(ConfigModel):
+    steps: PositiveInt
+    batch_size: PositiveInt
+    buffer_capacity: PositiveInt
+    learning_starts: NonNegativeInt
+    actor_learning_rate: PositiveFloat
+    critic_learning_rate: PositiveFloat
+    temperature_learning_rate: PositiveFloat
+    initial_alpha: PositiveFloat = 1.0
+    target_entropy: float | Literal["auto"] = "auto"
+    discount_factor: Probability
+    soft_update_rate: Probability
+
+    @model_validator(mode="after")
+    def validate_capacity(self) -> Self:
+        if self.buffer_capacity < self.batch_size:
+            raise ValueError("train.buffer_capacity must be at least train.batch_size.")
+        return self
+
+
 class A2CTrainConfig(ConfigModel):
     steps: PositiveInt
     learning_rate: PositiveFloat
@@ -238,6 +258,38 @@ class TD3Config(ConfigModel):
         return self
 
 
+class SACConfig(ConfigModel):
+    experiment: ExperimentConfig
+    env: EnvConfig
+    seed: NonNegativeInt
+    model: ModelConfig
+    train: SACTrainConfig
+    eval: EvalConfig
+    logging: LoggingConfig
+    checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
+
+    @model_validator(mode="after")
+    def validate_algorithm_support(self) -> Self:
+        if self.env.observation_normalization is not None:
+            raise ValueError(
+                "env.observation_normalization is not supported for SAC yet; "
+                "replay-buffer samples need raw-observation storage and current-stat "
+                "normalization."
+            )
+        if self.model.name == "sac_mlp":
+            missing_log_std_bounds = {
+                "log_std_min",
+                "log_std_max",
+            } - self.model.kwargs.keys()
+            if missing_log_std_bounds:
+                missing_names = ", ".join(sorted(missing_log_std_bounds))
+                raise ValueError(
+                    f"model.kwargs must define {missing_names} for SAC model "
+                    f"{self.model.name!r}."
+                )
+        return self
+
+
 class A2CConfig(ConfigModel):
     experiment: ExperimentConfig
     env: EnvConfig
@@ -291,7 +343,7 @@ class PPOConfig(ConfigModel):
 
 
 type ExperimentRunConfig = (
-    DQNConfig | DDPGConfig | TD3Config | A2CConfig | A3CConfig | PPOConfig
+    DQNConfig | DDPGConfig | TD3Config | SACConfig | A2CConfig | A3CConfig | PPOConfig
 )
 
 
@@ -307,6 +359,10 @@ def load_ddpg_config(
 
 def load_td3_config(config_path: Path, overrides: list[str] | None = None) -> TD3Config:
     return _load_run_config(config_path, TD3Config, overrides)
+
+
+def load_sac_config(config_path: Path, overrides: list[str] | None = None) -> SACConfig:
+    return _load_run_config(config_path, SACConfig, overrides)
 
 
 def load_a2c_config(config_path: Path, overrides: list[str] | None = None) -> A2CConfig:

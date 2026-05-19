@@ -6,6 +6,7 @@ from models import (
     build_actor_critic_model,
     build_ddpg_actor_critic_model,
     build_q_model,
+    build_sac_actor_critic_model,
     build_td3_actor_critic_model,
 )
 from policies import CategoricalPolicyDistribution, DiagGaussianPolicyDistribution
@@ -222,6 +223,67 @@ def test_td3_actor_critic_mlp_output_shapes_and_bounds() -> None:
     assert model.critic1[0].in_features == 5
     assert isinstance(model.critic2[0], torch.nn.Linear)
     assert model.critic2[0].in_features == 5
+
+
+def test_sac_actor_critic_mlp_output_shapes_bounds_and_log_probs() -> None:
+    action_spec = BoxActionSpec(
+        shape=(2,),
+        low=torch.tensor([-2.0, -1.0]).numpy(),
+        high=torch.tensor([2.0, 3.0]).numpy(),
+        dtype=torch.full((2,), 0.0).numpy().dtype,
+    )
+    model = build_sac_actor_critic_model(
+        name="sac_mlp",
+        observation_shape=(3,),
+        action_spec=action_spec,
+        kwargs={
+            "hidden_sizes": [8, 8],
+            "log_std_min": -20.0,
+            "log_std_max": 2.0,
+        },
+    )
+
+    observations = torch.zeros(4, 3)
+    deterministic_actions = model.act(observations)
+    sampled_actions, log_probs = model.sample_action(observations)
+    q1_values, q2_values = model.q_pair(observations, sampled_actions)
+
+    assert deterministic_actions.shape == (4, 2)
+    assert sampled_actions.shape == (4, 2)
+    assert torch.all(sampled_actions >= torch.tensor([-2.0, -1.0]))
+    assert torch.all(sampled_actions <= torch.tensor([2.0, 3.0]))
+    assert log_probs.shape == (4, 1)
+    assert torch.all(torch.isfinite(log_probs))
+    assert q1_values.shape == (4, 1)
+    assert q2_values.shape == (4, 1)
+    assert torch.equal(model.q1(observations, sampled_actions), q1_values)
+    assert hasattr(model, "actor")
+    assert hasattr(model, "critic1")
+    assert hasattr(model, "critic2")
+    assert model.critic1 is not model.critic2
+    assert isinstance(model.actor["mean_head"], torch.nn.Linear)
+    assert isinstance(model.actor["log_std_head"], torch.nn.Linear)
+    assert isinstance(model.critic1[0], torch.nn.Linear)
+    assert model.critic1[0].in_features == 5
+    assert isinstance(model.critic2[0], torch.nn.Linear)
+    assert model.critic2[0].in_features == 5
+
+
+def test_sac_actor_critic_mlp_requires_log_std_bounds() -> None:
+    action_spec = BoxActionSpec(
+        shape=(2,),
+        low=torch.tensor([-2.0, -1.0]).numpy(),
+        high=torch.tensor([2.0, 3.0]).numpy(),
+        dtype=torch.full((2,), 0.0).numpy().dtype,
+    )
+
+    with pytest.raises(ValueError, match="log_std_min"):
+        build_sac_actor_critic_model(
+            name="sac_mlp",
+            observation_shape=(3,),
+            action_spec=action_spec,
+            kwargs={"hidden_sizes": [8, 8]},
+        )
 
 
 def test_ddpg_actor_critic_mlp_rejects_empty_hidden_sizes() -> None:
