@@ -1,0 +1,37 @@
+experiment:
+  name: half_cheetah_td3
+  run_root: runs
+
+seed: 123
+
+env:
+  id: HalfCheetah-v4
+  num_envs: 1
+
+model:
+  name: td3_mlp
+  kwargs:
+    hidden_sizes: [256, 256]
+
+train:
+  steps: 1000000
+  batch_size: 256
+  buffer_capacity: 1000000
+  learning_starts: 25000
+  actor_learning_rate: 0.0003
+  critic_learning_rate: 0.0003
+  discount_factor: 0.99
+  soft_update_rate: 0.005
+  policy_delay: 2
+  target_policy_noise: 0.2
+  target_noise_clip: 0.5
+  exploration:
+    sigma: 0.1
+
+eval:
+  every_steps: 25000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 10000
