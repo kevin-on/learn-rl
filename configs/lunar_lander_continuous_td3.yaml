@@ -1,0 +1,37 @@
+experiment:
+  name: lunar_lander_continuous_td3
+  run_root: runs
+
+seed: 123
+
+env:
+  id: LunarLanderContinuous-v2
+  num_envs: 1
+
+model:
+  name: td3_mlp
+  kwargs:
+    hidden_sizes: [400, 300]
+
+train:
+  steps: 300000
+  batch_size: 256
+  buffer_capacity: 200000
+  learning_starts: 10000
+  actor_learning_rate: 0.001
+  critic_learning_rate: 0.001
+  discount_factor: 0.98
+  soft_update_rate: 0.005
+  policy_delay: 2
+  target_policy_noise: 0.2
+  target_noise_clip: 0.5
+  exploration:
+    sigma: 0.1
+
+eval:
+  every_steps: 10000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 10000
