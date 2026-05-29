@@ -1,0 +1,42 @@
+experiment:
+  name: tune_mountain_car_ppo_std1_ent01_norm_lr3e4
+  run_root: runs/continuous_action_compare/mountain_car_tuning
+
+seed: 123
+
+env:
+  id: MountainCarContinuous-v0
+  num_envs: 1
+  observation_normalization: {}
+
+model:
+  name: continuous_mlp
+  kwargs:
+    hidden_sizes: [256, 256]
+    layer_norm: false
+    init_log_std: 1.0
+    log_std_min: -20.0
+    log_std_max: 2.0
+
+train:
+  steps: 300000
+  learning_rate: 0.0003
+  discount_factor: 0.9999
+  gae_lambda: 0.9
+  rollout_steps: 8
+  minibatch_size: 8
+  epochs: 10
+  clip_coef: 0.1
+  value_coef: 0.19
+  entropy_coef: 0.01
+  max_grad_norm: 5.0
+  normalize_advantages: true
+
+eval:
+  every_steps: 10000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 10000
+  save_plot: false

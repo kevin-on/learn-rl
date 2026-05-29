@@ -1,0 +1,41 @@
+experiment:
+  name: compare_half_cheetah_ppo
+  run_root: runs/continuous_action_compare
+
+seed: 123
+
+env:
+  id: HalfCheetah-v5
+  num_envs: 16
+  observation_normalization: {}
+
+model:
+  name: continuous_mlp
+  kwargs:
+    hidden_sizes: [256, 256]
+    layer_norm: true
+    init_log_std: -2.0
+    log_std_min: -20.0
+    log_std_max: 2.0
+
+train:
+  steps: 1000000
+  learning_rate: 0.00002
+  discount_factor: 0.98
+  gae_lambda: 0.92
+  rollout_steps: 128
+  minibatch_size: 64
+  epochs: 20
+  clip_coef: 0.1
+  value_coef: 0.6
+  entropy_coef: 0.0004
+  max_grad_norm: 0.8
+  normalize_advantages: true
+
+eval:
+  every_steps: 25000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 25000

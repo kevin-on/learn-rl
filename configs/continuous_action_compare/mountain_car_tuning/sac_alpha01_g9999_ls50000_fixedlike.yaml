@@ -1,0 +1,38 @@
+experiment:
+  name: tune_mountain_car_sac_alpha01_g9999_ls50000_fixedlike
+  run_root: runs/continuous_action_compare/mountain_car_tuning
+
+seed: 123
+
+env:
+  id: MountainCarContinuous-v0
+  num_envs: 1
+
+model:
+  name: sac_mlp
+  kwargs:
+    hidden_sizes: [64, 64]
+    log_std_min: -20.0
+    log_std_max: 2.0
+
+train:
+  steps: 300000
+  batch_size: 512
+  buffer_capacity: 50000
+  learning_starts: 50000
+  actor_learning_rate: 0.0003
+  critic_learning_rate: 0.0003
+  temperature_learning_rate: 0.000000000001
+  initial_alpha: 0.1
+  target_entropy: auto
+  discount_factor: 0.9999
+  soft_update_rate: 0.01
+
+eval:
+  every_steps: 10000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 10000
+  save_plot: false

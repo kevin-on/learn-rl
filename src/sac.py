@@ -295,7 +295,7 @@ class SAC:
         q1_values, q2_values = self.online_model.q_pair(states, actions)
         critic1_loss = F.mse_loss(q1_values, target_q_values)
         critic2_loss = F.mse_loss(q2_values, target_q_values)
-        critic_loss = critic1_loss + critic2_loss
+        critic_loss = 0.5 * (critic1_loss + critic2_loss)
 
         self.critic_optimizer.zero_grad(set_to_none=True)
         critic_loss.backward()

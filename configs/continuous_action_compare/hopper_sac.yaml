@@ -1,11 +1,11 @@
 experiment:
-  name: pendulum_sac
-  run_root: runs
+  name: compare_hopper_sac
+  run_root: runs/continuous_action_compare
 
 seed: 123
 
 env:
-  id: Pendulum-v1
+  id: Hopper-v5
   num_envs: 1
 
 model:
@@ -16,22 +16,22 @@ model:
     log_std_max: 2.0
 
 train:
-  steps: 20000
+  steps: 1000000
   batch_size: 256
   buffer_capacity: 1000000
-  learning_starts: 1000
-  actor_learning_rate: 0.001
-  critic_learning_rate: 0.001
-  temperature_learning_rate: 0.001
+  learning_starts: 10000
+  actor_learning_rate: 0.0003
+  critic_learning_rate: 0.0003
+  temperature_learning_rate: 0.0003
   initial_alpha: 1.0
   target_entropy: auto
   discount_factor: 0.99
   soft_update_rate: 0.005
 
 eval:
-  every_steps: 1000
+  every_steps: 25000
   episodes: 10
   seed: 10000
 
 logging:
-  loss_every_steps: 1000
+  loss_every_steps: 25000

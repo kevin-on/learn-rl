@@ -1,0 +1,36 @@
+experiment:
+  name: compare_lunar_lander_continuous_ddpg
+  run_root: runs/continuous_action_compare
+
+seed: 123
+
+env:
+  id: LunarLanderContinuous-v3
+  num_envs: 1
+
+model:
+  name: ddpg_mlp
+  kwargs:
+    hidden_sizes: [256, 256]
+
+train:
+  steps: 1000000
+  batch_size: 100
+  buffer_capacity: 200000
+  learning_starts: 10000
+  actor_learning_rate: 0.001
+  critic_learning_rate: 0.001
+  discount_factor: 0.98
+  soft_update_rate: 0.005
+  exploration:
+    noise_type: normal
+    theta: 0.15
+    sigma: 0.1
+
+eval:
+  every_steps: 25000
+  episodes: 10
+  seed: 10000
+
+logging:
+  loss_every_steps: 25000
